@@ -1,8 +1,10 @@
 ---
-title: "Mero Appendix A"
+title: "Merow Appendix A"
 author: "Julin Maloof"
 date: "2024-11-15"
-output: html_document
+output: 
+  html_document: 
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
@@ -657,3 +659,69 @@ p16 <- tibble(size=y) %>%
 
 (pl11 + pl14 + pl15)  / (pl12 + pl13 + p16) 
 ```
+
+## Diagnostics
+
+### passage times.
+Start with life expectancy
+
+```{r}
+library(IPMpack)
+Pmat = new("IPMmatrix", nDiscrete = 0, nEnvClass = 0, nBigMatrix = n, nrow = n, ncol = n, meshpoints = y, env.index = 0, names.discrete = "")
+Pmat[, ] = P
+str(Pmat)
+```
+```{r}
+(mle=meanLifeExpect(Pmat))
+```
+
+plot the results
+
+```{r}
+plot(y,meanLifeExpect(Pmat), xlab="Size (t)",ylab="Time")
+```
+
+### Maximum size
+
+```{r fig.asp=2}
+par(mfrow=c(2,1),mar=c(4,5,2,2))
+image(y,y,t(P), xlab="Size (t)",ylab="Size (t+1)",
+           col=topo.colors(100), main="IPM matrix")
+contour(y,y,t(P), add = TRUE, drawlabels = TRUE)
+abline(0,1,lwd=3,lty=2)
+plot(density(d$sizeNext[!is.na(d$sizeNext)]),xlab="Size(t+1)",
+     main="Observed distribution of sizes")
+```
+### Transient dynamics
+
+IF the population is not at equilibrium what happens...
+
+Asymptotic growth rate
+```{r}
+(lam=Re(eigen(K)$values[1])) # asymptotic growth rate
+```
+
+Damping ratio (ratio of dominant eigen value to the second largest one)
+(what does the second largest eigen value represent?)
+```{r}
+(damp=Re(eigen(K)$values[1])/Re(eigen(K)$values[2])) # damping ratio
+```
+
+Create a random starting structure and run it forward for 20 years to see when it achieves the asymptotic growth rate.
+(Seems like you would want to do this a bunch of times if you cared)
+```{r}
+initial.pop=runif(100) #random starting population structure
+initial.pop=initial.pop/sum(initial.pop)
+nyears=20
+size.dist=matrix(NA,n,nyears)
+lambda=rep(NA,nyears)
+xold=initial.pop
+for(i in 1:nyears){
+  xnew=K%*%xold
+  lambda[i]=sum(xnew)/sum(xold)
+  size.dist[,i]=xnew
+  xold=xnew
+}
+lambda
+```
+
