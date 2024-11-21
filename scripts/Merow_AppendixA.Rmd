@@ -14,10 +14,10 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(patchwork)
-library(GGally)
 library(ggbeeswarm)
 library(magrittr)
 library(nlme)
+library(IPMpack)
 ```
 
 
@@ -666,7 +666,6 @@ p16 <- tibble(size=y) %>%
 Start with life expectancy
 
 ```{r}
-library(IPMpack)
 Pmat = new("IPMmatrix", nDiscrete = 0, nEnvClass = 0, nBigMatrix = n, nrow = n, ncol = n, meshpoints = y, env.index = 0, names.discrete = "")
 Pmat[, ] = P
 str(Pmat)

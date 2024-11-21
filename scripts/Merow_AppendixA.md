@@ -29,16 +29,6 @@ library(tidyverse)
 
 ``` r
 library(patchwork)
-library(GGally)
-```
-
-```
-## Registered S3 method overwritten by 'GGally':
-##   method from   
-##   +.gg   ggplot2
-```
-
-``` r
 library(ggbeeswarm)
 library(magrittr)
 ```
@@ -67,6 +57,32 @@ library(nlme)
 ## The following object is masked from 'package:dplyr':
 ## 
 ##     collapse
+```
+
+``` r
+library(IPMpack)
+```
+
+```
+## Loading required package: Matrix
+## 
+## Attaching package: 'Matrix'
+## 
+## The following objects are masked from 'package:tidyr':
+## 
+##     expand, pack, unpack
+## 
+## Loading required package: MASS
+## 
+## Attaching package: 'MASS'
+## 
+## The following object is masked from 'package:patchwork':
+## 
+##     area
+## 
+## The following object is masked from 'package:dplyr':
+## 
+##     select
 ```
 
 
@@ -1049,46 +1065,6 @@ Start with life expectancy
 
 
 ``` r
-library(IPMpack)
-```
-
-```
-## Loading required package: Matrix
-```
-
-```
-## 
-## Attaching package: 'Matrix'
-```
-
-```
-## The following objects are masked from 'package:tidyr':
-## 
-##     expand, pack, unpack
-```
-
-```
-## Loading required package: MASS
-```
-
-```
-## 
-## Attaching package: 'MASS'
-```
-
-```
-## The following object is masked from 'package:patchwork':
-## 
-##     area
-```
-
-```
-## The following object is masked from 'package:dplyr':
-## 
-##     select
-```
-
-``` r
 Pmat = new("IPMmatrix", nDiscrete = 0, nEnvClass = 0, nBigMatrix = n, nrow = n, ncol = n, meshpoints = y, env.index = 0, names.discrete = "")
 Pmat[, ] = P
 str(Pmat)
@@ -1197,8 +1173,8 @@ lambda
 ```
 
 ```
-##  [1] 1.0941835 0.9518982 0.9656496 0.9743737 0.9764432 0.9766844 0.9766435
-##  [8] 0.9765990 0.9765795 0.9765739 0.9765730 0.9765731 0.9765732 0.9765733
+##  [1] 0.9889405 0.9471882 0.9659218 0.9749179 0.9767735 0.9768108 0.9766747
+##  [8] 0.9766023 0.9765781 0.9765729 0.9765726 0.9765730 0.9765732 0.9765733
 ## [15] 0.9765733 0.9765733 0.9765733 0.9765733 0.9765733 0.9765733
 ```
 
