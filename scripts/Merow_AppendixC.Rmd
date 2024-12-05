@@ -88,20 +88,57 @@ x0<-data.frame(size=x,size2=x^2,size3=x^3) # for later use
 
 #### Survival and Growth Kernel
 
+** Merow Version **
+
 Survival
+
 ```{r}
 survModelComp(dataf = d94[!is.na(d$size),],
               expVars = c(surv~1, surv~size, surv~size + size2,
                           surv~size + size2 + size3),
               makePlot = TRUE, legendPos = "bottomleft", mainTitle = "Survival")
 ```
-
 choose quadratic
 ```{r}
 so94 <- makeSurvObj(d94, surv~size+I(size^2))
 ```
 
+
+** JM Version **
+
+```{r}
+newdata = tibble(size=seq(min(d94$size, na.rm = TRUE), max(d94$size, na.rm = TRUE), length.out=101))
+
+surv.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"),
+                      f = c("surv ~ 1", 
+                            "surv ~ size", 
+                            "surv ~ size + I(size^2)", 
+                            "surv ~ size + I(size^2) + I(size^3)"))
+
+surv.models <- surv.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), data = d94, family = "binomial") ),
+         predict = map(glm, ~ cbind(newdata, surv=predict(., newdata, type = "response"))),
+         glance = map(glm, glance))
+
+surv.models %>% unnest(glance)
+```
+AIC is **VERY** similar.  Merow chose quadratic.
+
+plot the fits
+```{r}
+surv.predictions <- surv.models %>% dplyr::select(name, predict) %>% unnest(predict)
+
+d94 %>% filter(!is.na(surv)) %>%
+  ggplot(aes(x=size, y =surv)) +
+  geom_point() +
+  geom_line(aes(color=name), data = surv.predictions) +
+  scale_color_viridis_d(end = 0.9)
+```
+
+
 Growth
+
+** Merrow **
 ```{r}
 growthModelComp(dataf = d94, expVars = c(sizeNext~1, sizeNext~size,
                                          sizeNext~size + size2, sizeNext~size + size2 + size3), makePlot = TRUE,
@@ -114,7 +151,42 @@ Choose linear
 go94 <- makeGrowthObj(d94, sizeNext~size)
 ```
 
+** Julin **
+
+** JM Version **
+
+```{r}
+growth.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"),
+                      f = c("sizeNext ~ 1", 
+                            "sizeNext ~ size", 
+                            "sizeNext ~ size + I(size^2)", 
+                            "sizeNext ~ size + I(size^2) + I(size^3)"))
+
+growth.models <- growth.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), data = d94) ),
+         predict = map(glm, ~ cbind(newdata, sizeNext=predict(., newdata, type = "response"))),
+         glance = map(glm, glance))
+
+growth.models %>% unnest(glance)
+```
+AIC is AIC is lowest for linear.
+
+plot the fits
+```{r}
+growth.predictions <- growth.models %>% dplyr::select(name, predict) %>% unnest(predict)
+
+d94 %>% filter(!is.na(sizeNext) & !is.na(size)) %>%
+  ggplot(aes(x=size, y =sizeNext)) +
+  geom_point() +
+  geom_abline(slope = 1, intercept = 0, lty = 5, color = "grey") + 
+  geom_line(aes(color=name), data = growth.predictions) +
+  scale_color_viridis_d(end = 0.9)
+```
+
+
 Make the P matrix and plot it
+
+** Merow **
 ```{r}
 Pmatrix94 <- makeIPMPmatrix(survObj = so94, growObj = go94,
                             minSize = minSize, maxSize = maxSize,
@@ -128,12 +200,40 @@ image.plot(Pmatrix94@meshpoints,
            ylab = "Size at t+1")
 abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
 ```
-
-evaluate it
-```{r}
+evaluate P matrix
+```{r, eval=FALSE}
 diagnosticsPmatrix(Pmatrix94, growObj = go94, survObj = so94,
                    correction = "constant")
 ```
+
+** Julin **
+
+paramater data frame
+
+```{r}
+params=data.frame(
+  surv.int=NA, # Intercept from logistic regression of survival
+  surv.slope1=NA, # Slope from logistic regression of survival
+  surv.slope2=NA, # Quadratic slope from logistic regression of survival
+  growth.int=NA, # Intercept from linear regression of growth
+  growth.slope=NA, # Slope from linear regression of growth
+  growth.sd=NA # Residual sd from the linear regression of growth
+)
+```
+
+```{r}
+# would be better to do this with broom::tidy
+surv.final <- surv.models %>% filter(name=="2_quadratic") %>% pull(glm) %>% magrittr::extract2(1)
+coef(surv.final)
+```
+
+
+evaluate P matrix
+```{r, eval=FALSE}
+diagnosticsPmatrix(Pmatrix94, growObj = go94, survObj = so94,
+                   correction = "constant")
+```
+
 
 #### Fecundity Kernel
 
@@ -147,10 +247,17 @@ fec0.3_94 <- makeFecObj(d94, Formula = fec0~size+size2+size3, Family = "binomial
 ```
 
 ```{r}
-fec0.models <- tibble(f = c("fec0 ~ 1", "fec0 ~ size", "fec0 ~ size + I(size^2)", "fec0 ~ size + I(size^2) + I(size^3)"))
+newdata = tibble(size=seq(min(d94$size, na.rm = TRUE), max(d94$size, na.rm = TRUE), length.out=101))
+
+fec0.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"),
+                      f = c("fec0 ~ 1", 
+                            "fec0 ~ size", 
+                            "fec0 ~ size + I(size^2)", 
+                            "fec0 ~ size + I(size^2) + I(size^3)"))
 
 fec0.models <- fec0.models %>%
   mutate(glm = map(f, ~ glm(as.formula(.), data = d94, family = "binomial") ),
+         predict = map(glm, ~ cbind(newdata, fec0=predict(., newdata, type = "response"))),
          glance = map(glm, glance))
 
 fec0.models %>% unnest(glance)
@@ -159,15 +266,14 @@ fec0.models %>% unnest(glance)
 ```
 
 plot predictions:
-(It would be nice to clean this up to use a single geom_function call and to have a legend...)
 ```{r}
+fec0.predictions <- fec0.models %>% dplyr::select(name, predict) %>% unnest(predict)
+
 d94 %>% filter(!is.na(fec0)) %>%
   ggplot(aes(x=size, y =fec0)) +
   geom_point() +
-  geom_function(fun = ~ predict(fec0.models$glm[[1]], data.frame(size=.x), type = "response"), lwd=.5, color="grey") +
-  geom_function(fun = ~ predict(fec0.models$glm[[2]], data.frame(size=.x), type = "response"), lwd=.5, color="blue") +
-  geom_function(fun = ~ predict(fec0.models$glm[[3]], data.frame(size=.x), type = "response"), lwd=.5, color="magenta") +
-  geom_function(fun = ~ predict(fec0.models$glm[[4]], data.frame(size=.x), type = "response"), lwd=.5, color="green")
+  geom_line(aes(color=name), data = fec0.predictions) +
+  scale_color_viridis_d(end = 0.9)
 ```
 
 
@@ -181,27 +287,31 @@ fec1.3_94 <- makeFecObj(d94, Formula = fec1~size+size2+size3, Family = "poisson"
 ```
 
 ```{r}
-fec1.models <- tibble(f = c("fec1 ~ 1", "fec1 ~ size", "fec1 ~ size + I(size^2)", "fec1 ~ size + I(size^2) + I(size^3)"))
+fec1.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"),
+                      f = c("fec1 ~ 1", 
+                            "fec1 ~ size", 
+                            "fec1 ~ size + I(size^2)", 
+                            "fec1 ~ size + I(size^2) + I(size^3)"))
 
 fec1.models <- fec1.models %>%
   mutate(glm = map(f, ~ glm(as.formula(.), data = d94, family = "poisson") ),
+         predict = map(glm, ~ cbind(newdata, fec1=predict(., newdata, type = "response"))),
          glance = map(glm, glance))
 
 fec1.models %>% unnest(glance)
 
-# AIC lowest in cubic
+# AIC clearly lowest in cubic
 ```
 
 plot predictions:
-(It would be nice to clean this up to use a single geom_function call and to have a legend...)
 ```{r}
+fec1.predictions <- fec1.models %>% dplyr::select(name, predict) %>% unnest(predict)
+
 d94 %>% filter(!is.na(fec1)) %>%
   ggplot(aes(x=size, y =fec1)) +
   geom_point() +
-  geom_function(fun = ~ predict(fec1.models$glm[[1]], data.frame(size=.x), type = "response"), lwd=.5, color="grey") +
-  geom_function(fun = ~ predict(fec1.models$glm[[2]], data.frame(size=.x), type = "response"), lwd=.5, color="blue") +
-  geom_function(fun = ~ predict(fec1.models$glm[[3]], data.frame(size=.x), type = "response"), lwd=.5, color="magenta") +
-  geom_function(fun = ~ predict(fec1.models$glm[[4]], data.frame(size=.x), type = "response"), lwd=.5, color="green")
+  geom_line(aes(color=name), data = fec1.predictions) +
+  scale_color_viridis_d(end=.9)
 ```
 
 put it together:
