@@ -1,0 +1,225 @@
+---
+title: "Merow Appendix C"
+author: "Julin Maloof"
+date: "2024-12-04"
+output:
+  html_document:
+    keep_markdown: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(broom)
+#library(patchwork)
+#library(ggbeeswarm)
+#library(magrittr)
+#library(nlme)
+library(IPMpack)
+#conflicted::conflict_prefer("select", "dplyr")
+```
+
+```{r}
+data("dataIPMpackHypericumCov")
+
+d <- dataIPMpackHypericumCov
+head(d)
+```
+
+```{r}
+skimr::skim(d)
+```
+```{r}
+d1 <- subset(d,is.na(d$size)==FALSE | d$ontogenyNext==1)
+d1 <- subset(d1,d1$year==1994 | d1$year==1996)
+```
+
+some additional data:
+```{r}
+fec2 <- 13.78 # number of seed per fruit
+fec3 <- 0.001336 # probability of germination the year that the seed was prodiced
+fec4 <- 0.14 # probability of seedling survival from germination to time of next census
+goSB <- 0.08234528 # probability of a seed entering the seed bank
+staySB <- 0.671 # probability of a seed staying in the seed bank
+```
+
+keep columns that we are going to use
+```{r}
+d1 <- d1 |>
+  dplyr::select(year, size, surv, sizeNext, fec0, fec1)
+```
+
+Add a variable to indicate the number of individuals changing size.  This will be be used later.  Set up stage and stage next
+
+```{r}
+d1$number <- 1
+d1$stageNext <- d1$stage <- "continuous"
+d1$stage[is.na(d1$size)] <- NA
+d1$stageNext[d1$surv==0] <- "dead"
+```
+
+Set up a seedbank data frame
+```{r}
+seedbank <- data.frame(year="All",size=NA,surv=1,sizeNext=NA,fec0=NA,fec1=NA,
+                       stage=c("seedbank","seedbank","continuous"),
+                       stageNext=c("seedbank","continuous","seedbank"),
+                       number=c(staySB,(1-staySB)*fec3*fec4,1))
+seedbank
+```
+combine data frames
+```{r}
+d1 <- rbind(d1, seedbank)
+```
+
+## Analysis 
+
+### 94 data
+
+```{r}
+d94 <- subset(d1, d1$year == "1994" | d1$year == "All")
+minSize<-min(d1$size,na.rm=T)
+maxSize<-max(d1$size,na.rm=T)
+x<-seq(from=minSize,to=maxSize,length=1001)
+x0<-data.frame(size=x,size2=x^2,size3=x^3) # for later use
+```
+
+#### Survival and Growth Kernel
+
+Survival
+```{r}
+survModelComp(dataf = d94[!is.na(d$size),],
+              expVars = c(surv~1, surv~size, surv~size + size2,
+                          surv~size + size2 + size3),
+              makePlot = TRUE, legendPos = "bottomleft", mainTitle = "Survival")
+```
+
+choose quadratic
+```{r}
+so94 <- makeSurvObj(d94, surv~size+I(size^2))
+```
+
+Growth
+```{r}
+growthModelComp(dataf = d94, expVars = c(sizeNext~1, sizeNext~size,
+                                         sizeNext~size + size2, sizeNext~size + size2 + size3), makePlot = TRUE,
+                legendPos = "bottomright", mainTitle = "Growth")
+abline(a = 0, b = 1, lty= 2, col = "gray", lwd=2)
+```
+
+Choose linear
+```{r}
+go94 <- makeGrowthObj(d94, sizeNext~size)
+```
+
+Make the P matrix and plot it
+```{r}
+Pmatrix94 <- makeIPMPmatrix(survObj = so94, growObj = go94,
+                            minSize = minSize, maxSize = maxSize,
+                            nBigMatrix = 80, correction = "constant")
+require(fields)
+image.plot(Pmatrix94@meshpoints,
+           Pmatrix94@meshpoints,
+           t(Pmatrix94),
+           main = "Pmatrix: survival and growth",
+           xlab = "Size at t",
+           ylab = "Size at t+1")
+abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
+```
+
+evaluate it
+```{r}
+diagnosticsPmatrix(Pmatrix94, growObj = go94, survObj = so94,
+                   correction = "constant")
+```
+
+#### Fecundity Kernel
+
+Compare different models for flowering probability:
+getting an error
+```{r, eval=FALSE}
+fec0.0_94 <- makeFecObj(d94, Formula = fec0~1, Family = "binomial")
+fec0.1_94 <- makeFecObj(d94, Formula = fec0~size, Family = "binomial")
+fec0.2_94 <- makeFecObj(d94, Formula = fec0~size+size2, Family = "binomial")
+fec0.3_94 <- makeFecObj(d94, Formula = fec0~size+size2+size3, Family = "binomial")
+```
+
+```{r}
+fec0.models <- tibble(f = c("fec0 ~ 1", "fec0 ~ size", "fec0 ~ size + I(size^2)", "fec0 ~ size + I(size^2) + I(size^3)"))
+
+fec0.models <- fec0.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), data = d94, family = "binomial") ),
+         glance = map(glm, glance))
+
+fec0.models %>% unnest(glance)
+
+# AIC lowest in cubic, although not by a ton.
+```
+
+plot predictions:
+(It would be nice to clean this up to use a single geom_function call and to have a legend...)
+```{r}
+d94 %>% filter(!is.na(fec0)) %>%
+  ggplot(aes(x=size, y =fec0)) +
+  geom_point() +
+  geom_function(fun = ~ predict(fec0.models$glm[[1]], data.frame(size=.x), type = "response"), lwd=.5, color="grey") +
+  geom_function(fun = ~ predict(fec0.models$glm[[2]], data.frame(size=.x), type = "response"), lwd=.5, color="blue") +
+  geom_function(fun = ~ predict(fec0.models$glm[[3]], data.frame(size=.x), type = "response"), lwd=.5, color="magenta") +
+  geom_function(fun = ~ predict(fec0.models$glm[[4]], data.frame(size=.x), type = "response"), lwd=.5, color="green")
+```
+
+
+Compare different models for number of fruits
+getting an error
+```{r, eval=FALSE}
+fec1.0_94 <- makeFecObj(d94, Formula = fec1~1, Family = "poisson")
+fec1.1_94 <- makeFecObj(d94, Formula = fec1~size, Family = "poisson")
+fec1.2_94 <- makeFecObj(d94, Formula = fec1~size+size2, Family = "poisson")
+fec1.3_94 <- makeFecObj(d94, Formula = fec1~size+size2+size3, Family = "poisson")
+```
+
+```{r}
+fec1.models <- tibble(f = c("fec1 ~ 1", "fec1 ~ size", "fec1 ~ size + I(size^2)", "fec1 ~ size + I(size^2) + I(size^3)"))
+
+fec1.models <- fec1.models %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), data = d94, family = "poisson") ),
+         glance = map(glm, glance))
+
+fec1.models %>% unnest(glance)
+
+# AIC lowest in cubic
+```
+
+plot predictions:
+(It would be nice to clean this up to use a single geom_function call and to have a legend...)
+```{r}
+d94 %>% filter(!is.na(fec1)) %>%
+  ggplot(aes(x=size, y =fec1)) +
+  geom_point() +
+  geom_function(fun = ~ predict(fec1.models$glm[[1]], data.frame(size=.x), type = "response"), lwd=.5, color="grey") +
+  geom_function(fun = ~ predict(fec1.models$glm[[2]], data.frame(size=.x), type = "response"), lwd=.5, color="blue") +
+  geom_function(fun = ~ predict(fec1.models$glm[[3]], data.frame(size=.x), type = "response"), lwd=.5, color="magenta") +
+  geom_function(fun = ~ predict(fec1.models$glm[[4]], data.frame(size=.x), type = "response"), lwd=.5, color="green")
+```
+
+put it together:
+```{r}
+fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2, fec1~size+size2+size3),
+                   Family=c("binomial", "poisson"),
+                   Transform=c("none", -1),
+                   meanOffspringSize=mean(d94[is.na(d1$size)==TRUE &
+                                                is.na(d94$sizeNext)==FALSE,"sizeNext"]),
+                   sdOffspringSize=sd(d94[is.na(d1$size)==TRUE &
+                                            is.na(d94$sizeNext)==FALSE,"sizeNext"]),
+                   fecConstants=data.frame(fec2=fec2,fec3=fec3,fec4=fec4),
+                   offspringSplitter=data.frame(seedbank=goSB,
+                                                continuous=(1-goSB)),
+                   vitalRatesPerOffspringType=data.frame(
+                     seedbank=c(1,1,1,0,0),
+                     continuous=c(1,1,1,1,1),
+                     row.names=c("fec0","fec1",
+                                 "fec2","fec3","fec4")))
+```
+

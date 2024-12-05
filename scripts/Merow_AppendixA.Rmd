@@ -88,7 +88,7 @@ params=data.frame(
 ### Survival
 
 ```{r}
-surv.reg=glm(surv~size,data=d,family=binomial())
+surv.reg=glm(surv ~ size, data=d, family=binomial())
 summary(surv.reg)
 
 params$surv.int=coefficients(surv.reg)[1]
@@ -98,7 +98,7 @@ params$surv.slope=coefficients(surv.reg)[2]
 ### Growth
 
 ```{r}
-growth.reg=lm(sizeNext~size,data=d)
+growth.reg=lm(sizeNext ~ size, data=d)
 summary(growth.reg)
 
 params$growth.int=coefficients(growth.reg)[1]
@@ -109,7 +109,7 @@ params$growth.sd=sd(resid(growth.reg))
 ### Seed production
 
 ```{r}
-seed.reg=glm(fec.seed~size,data=d,family=poisson())
+seed.reg=glm(fec.seed ~ size, data=d, family=poisson())
 summary(seed.reg)
 params$seed.int=coefficients(seed.reg)[1]
 params$seed.slope=coefficients(seed.reg)[2]
@@ -148,7 +148,7 @@ p3.fit <- p3 + geom_function(fun = ~ predict(seed.reg,
                                              type="response"),
                              color = "red",lwd=1)
 
-p4.fit <- p4 + geom_function(fun = ~ dnorm(.x,params$recruit.size.mean,params$recruit.size.sd),
+p4.fit <- p4 + geom_function(fun = ~ dnorm(.x,params$recruit.size.mean, params$recruit.size.sd),
                              color = "red", lwd=1)
 
 (p1.fit + p2.fit) / (p3.fit + p4.fit)
@@ -157,10 +157,30 @@ p4.fit <- p4 + geom_function(fun = ~ dnorm(.x,params$recruit.size.mean,params$re
 
 ## Define functions to describe life history
 
+unannotated
+```{r, eval=FALSE}
+# 1. survival probability function
+s.x=function(x,params) {
+  u=exp(params$surv.int+params$surv.slope*x)
+  return(u/(1+u))
+}
+
+# 2. growth function
+g.yx=function(xp,x,params) {
+  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
+}
+
+# 3. reproduction function "expected offspring"
+f.yx=function(xp,x,params) {
+  params$establishment.prob*
+    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)*
+    exp(params$seed.int+params$seed.slope*x) # why exp()?
+}
+```
 
 ```{r}
 # 1. survival probability function
-## JM.  I think this is the inverse logit function
+## JM. This is inverse logit.  Provides survival probability based on size.
 s.x=function(x,params) {
   u=exp(params$surv.int+params$surv.slope*x)
   return(u/(1+u))
@@ -173,6 +193,7 @@ g.yx=function(xp,x,params) {
 }
 
 # 3. reproduction function
+## JM.  exp becauase the original was Poisson and that is fit with a log link.
 f.yx=function(xp,x,params) {
   params$establishment.prob*
     dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)*
@@ -188,7 +209,7 @@ Define the parameters for integration
 min.size=.9*min(c(d$size,d$sizeNext),na.rm=T)
 max.size=1.1*max(c(d$size,d$sizeNext),na.rm=T)
 
-n=100 # number of cells in the matrix
+n=100 # dimensions of the matrix
 
 b=min.size+c(0:n)*(max.size-min.size)/n # boundary points
 y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
@@ -200,6 +221,11 @@ Illustration of `outer`
 x.test <- 1:5 %>% set_names(1:5)
 y.test <- 11:15 %>% set_names(11:15)
 outer(x.test, y.test, FUN = `+`)
+```
+```{r}
+head(y)
+range(y)
+h
 ```
 
 
