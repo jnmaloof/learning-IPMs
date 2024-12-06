@@ -4,7 +4,7 @@ author: "Julin Maloof"
 date: "2024-12-04"
 output:
   html_document:
-    keep_markdown: true
+    keep_md: true
 ---
 
 ```{r setup, include=FALSE}
@@ -16,7 +16,7 @@ library(tidyverse)
 library(broom)
 #library(patchwork)
 #library(ggbeeswarm)
-#library(magrittr)
+library(magrittr)
 #library(nlme)
 library(IPMpack)
 #conflicted::conflict_prefer("select", "dplyr")
@@ -124,6 +124,11 @@ surv.models %>% unnest(glance)
 ```
 AIC is **VERY** similar.  Merow chose quadratic.
 
+```{r}
+surv.models$predict[[1]]
+```
+
+
 plot the fits
 ```{r}
 surv.predictions <- surv.models %>% dplyr::select(name, predict) %>% unnest(predict)
@@ -131,6 +136,7 @@ surv.predictions <- surv.models %>% dplyr::select(name, predict) %>% unnest(pred
 d94 %>% filter(!is.na(surv)) %>%
   ggplot(aes(x=size, y =surv)) +
   geom_point() +
+  geom_smooth() + 
   geom_line(aes(color=name), data = surv.predictions) +
   scale_color_viridis_d(end = 0.9)
 ```
@@ -163,9 +169,9 @@ growth.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubi
                             "sizeNext ~ size + I(size^2) + I(size^3)"))
 
 growth.models <- growth.models %>%
-  mutate(glm = map(f, ~ glm(as.formula(.), data = d94) ),
-         predict = map(glm, ~ cbind(newdata, sizeNext=predict(., newdata, type = "response"))),
-         glance = map(glm, glance))
+  mutate(lm = map(f, ~ lm(as.formula(.), data = d94) ),
+         predict = map(lm, ~ cbind(newdata, sizeNext=predict(., newdata))),
+         glance = map(lm, glance))
 
 growth.models %>% unnest(glance)
 ```
@@ -221,14 +227,103 @@ params=data.frame(
 )
 ```
 
+Get the survival coefficients.  Using the quadratic model.
 ```{r}
-# would be better to do this with broom::tidy
-surv.final <- surv.models %>% filter(name=="2_quadratic") %>% pull(glm) %>% magrittr::extract2(1)
-coef(surv.final)
+# I am using broom:tidy to create a df with the coefficients.
+surv.coefs <- surv.models %>% 
+  filter(name == "2_quadratic") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  dplyr::select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params$surv.int <- surv.coefs %>% filter(term == "(Intercept)") %>% pull(estimate)
+params$surv.slope1 <- surv.coefs %>% filter(term == "size") %>% pull(estimate)
+params$surv.slope2 <- surv.coefs %>% filter(term == "I(size^2)") %>% pull(estimate)
+```
+
+Get the growth coefficients.  Using the linear model.
+```{r}
+growth.coefs <- growth.models %>% 
+  filter(name == "1_linear") %>%
+  mutate(coefs = map(lm, tidy)) %>% 
+  dplyr::select(name, f, coefs) %>% 
+  unnest(coefs)
+
+params$growth.int <- growth.coefs %>% filter(term=="(Intercept)") %>% pull(estimate)
+params$growth.slope <- growth.coefs %>% filter(term=="size") %>% pull(estimate)
+
+# I am pulling sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed.  
+params$growth.sd <- growth.models %>% filter(name=="1_linear") %>% unnest(glance) %>% pull(sigma)
+```
+
+Set up the functions
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x=function(x,params) {
+  u=exp(params$surv.int + params$surv.slope1*x + params$surv.slope2*x^2)
+  return(u/(1+u))
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+g.yx=function(xp,x,params) {
+  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
+}
+```
+
+Make a kernel
+Define the parameters for integration
+```{r}
+# the sizes we are integrating over
+min.size=.9*min(c(d94$size, d94$sizeNext),na.rm=T)
+max.size=1.1*max(c(d94$size, d94$sizeNext),na.rm=T)
+
+n=100 # dimensions of the matrix
+
+b=min.size+c(0:n)*(max.size-min.size)/n # boundary points
+y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
+h=y[2]-y[1] # step size
+```
+
+Make the matrix
+```{r}
+G=h*outer(y,y,g.yx,params=params) # growth matrix
+# OK for each value of y,y evaluate the growth function g.yx using params
+# If I understand this correctly, the rows are x(t) and the columns are x(t+1)
+
+S=s.x(y,params=params) # survival
+# F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+P=G # placeholder; redefine P on the next line
+for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix
+# K=P+F # full matrix
+```
+
+Plot the matrix
+```{r}
+P %>% as_tibble() %>%
+  set_colnames(y) %>% 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) +
+  geom_contour(aes(z = value),lwd=.25) +
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Size and Growth") +
+  coord_equal() +
+  theme_bw()
 ```
 
 
-evaluate P matrix
+evaluate P matrix -- Need a non-IPMpack way of doing this.
+Merow (appendix C) says:
+
+Calling the function PMatrixDiagnostics yields a figure
+illustrating whether survival, life expectancy, and populations structure change with an increase
+in the number of bins or an increase in the size range. 
+
+To make this work I think we need a function that makes the Matrix for us based on some parameters (bin size, etc).  Then this can be called repeatedly.
 ```{r, eval=FALSE}
 diagnosticsPmatrix(Pmatrix94, growObj = go94, survObj = so94,
                    correction = "constant")
@@ -315,7 +410,7 @@ d94 %>% filter(!is.na(fec1)) %>%
 ```
 
 put it together:
-```{r}
+```{r, eval = FALSE}
 fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2, fec1~size+size2+size3),
                    Family=c("binomial", "poisson"),
                    Transform=c("none", -1),
