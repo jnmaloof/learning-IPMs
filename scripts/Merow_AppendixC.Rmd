@@ -159,14 +159,12 @@ go94 <- makeGrowthObj(d94, sizeNext~size)
 
 ** Julin **
 
-** JM Version **
-
 ```{r}
 growth.models <- tibble(name=c("0_intercept", "1_linear", "2_quadratic", "3_cubic"),
-                      f = c("sizeNext ~ 1", 
-                            "sizeNext ~ size", 
-                            "sizeNext ~ size + I(size^2)", 
-                            "sizeNext ~ size + I(size^2) + I(size^3)"))
+                        f = c("sizeNext ~ 1", 
+                              "sizeNext ~ size", 
+                              "sizeNext ~ size + I(size^2)", 
+                              "sizeNext ~ size + I(size^2) + I(size^3)"))
 
 growth.models <- growth.models %>%
   mutate(lm = map(f, ~ lm(as.formula(.), data = d94) ),
@@ -193,7 +191,7 @@ d94 %>% filter(!is.na(sizeNext) & !is.na(size)) %>%
 Make the P matrix and plot it
 
 ** Merow **
-```{r}
+```{r, fig.asp=1}
 Pmatrix94 <- makeIPMPmatrix(survObj = so94, growObj = go94,
                             minSize = minSize, maxSize = maxSize,
                             nBigMatrix = 80, correction = "constant")
@@ -214,7 +212,7 @@ diagnosticsPmatrix(Pmatrix94, growObj = go94, survObj = so94,
 
 ** Julin **
 
-paramater data frame
+parameter data frame
 
 ```{r}
 params=data.frame(
@@ -261,14 +259,14 @@ Set up the functions
 # 1. survival probability function
 ##This is inverse logit.  Provides survival probability based on size.
 s.x=function(x,params) {
-  u=exp(params$surv.int + params$surv.slope1*x + params$surv.slope2*x^2)
+  u=exp(params$surv.int + params$surv.slope1*x + params$surv.slope2*(x^2))
   return(u/(1+u))
 }
 
 # 2. growth function
 ## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
 g.yx=function(xp,x,params) {
-  dnorm(xp,mean=params$growth.int+params$growth.slope*x,sd=params$growth.sd)
+  dnorm(xp,mean=(params$growth.int + params$growth.slope*x), sd=params$growth.sd)
 }
 ```
 
@@ -299,6 +297,33 @@ for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix
 # K=P+F # full matrix
 ```
 
+Correct the matrix using the Merow et al "constant" correction code
+
+```{r} 
+Pc <- P # a new, corrected matrix
+nvals <- colSums(Pc, na.rm = TRUE)
+loc0 <- which(nvals == 0, arr.ind = TRUE)
+
+if (length(loc0) > 0) {
+  print("warnings - columns that sum to 0 or that have NAs - assuming survival is along the diagonal; plot your Pmatrix to check it")
+  Pc[, loc0] <- 0
+  Pc[cbind(loc0, loc0)] <- s.x(y[loc0], params=params)
+}
+nvals <- colSums(Pc, na.rm = TRUE)
+Pc <- t((t(Pc)/nvals) * s.x(y, params=params))
+```
+
+Test matrix division
+
+```{r}
+m <- matrix(1:9, nrow=3)
+nvals <- colSums(m)
+m
+nvals
+t(m) / nvals
+```
+
+
 Plot the matrix
 ```{r}
 P %>% as_tibble() %>%
@@ -315,6 +340,21 @@ P %>% as_tibble() %>%
   theme_bw()
 ```
 
+Plot the CORRECTED matrix
+```{r}
+Pc %>% as_tibble() %>%
+  set_colnames(y) %>% 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) +
+  geom_contour(aes(z = value),lwd=.25) +
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix (corrected): Size and Growth") +
+  coord_equal() +
+  theme_bw()
+```
 
 evaluate P matrix -- Need a non-IPMpack way of doing this.
 Merow (appendix C) says:
@@ -411,6 +451,7 @@ d94 %>% filter(!is.na(fec1)) %>%
 
 put it together:
 ```{r, eval = FALSE}
+d94$stage = factor(d94$stage)
 fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2, fec1~size+size2+size3),
                    Family=c("binomial", "poisson"),
                    Transform=c("none", -1),
@@ -426,5 +467,39 @@ fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2, fec1~size+size2+size3),
                      continuous=c(1,1,1,1,1),
                      row.names=c("fec0","fec1",
                                  "fec2","fec3","fec4")))
+```
+```{r}
+vitalRatesPerOffspringType=data.frame(seedbank=c(1,1,1,0,0),
+                                      continuous=c(1,1,1,1,1),
+                                      row.names=c("fec0","fec1","fec2","fec3","fec4"))
+vitalRatesPerOffspringType
+```
+
+Two typos in this sentence? or in the code? I think in the description.  "Closer examination of the data frame will help make it evident that fec0, fec1 and fec3
+aﬀect all propagules, whereas fec3 and fec4 only aﬀect seeds in the seed bank."
+
+
+Make the F Matrix:
+
+```{r}
+Fmatrix94 <- makeIPMFmatrix(fecObj=fo94, minSize=minSize, maxSize=maxSize,
+nBigMatrix=80, correction="constant")
+```
+
+plot it:
+```{r,fig.asp=1}
+require(fields)
+image.plot(Fmatrix94@meshpoints,
+Fmatrix94@meshpoints,
+t(Fmatrix94[2:maxSize,2:maxSize]),
+main = "Fmatrix: fecundity",
+xlab = "Size at t",
+ylab = "Size at t+1")
+```
+```{r}
+dto94 <- makeDiscreteTrans(d94)
+dummy94 <- as.matrix(fo94@offspringRel$coefficients[1])
+dimnames(dummy94) <- list(1,"seedbank")
+dto94@meanToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
 ```
 
