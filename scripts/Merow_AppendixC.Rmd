@@ -19,6 +19,7 @@ library(broom)
 library(magrittr)
 #library(nlme)
 library(IPMpack)
+source("makeDiscreteTrans.R", local=as.environment("package:IPMpack"))
 #conflicted::conflict_prefer("select", "dplyr")
 ```
 
@@ -501,5 +502,157 @@ dto94 <- makeDiscreteTrans(d94)
 dummy94 <- as.matrix(fo94@offspringRel$coefficients[1])
 dimnames(dummy94) <- list(1,"seedbank")
 dto94@meanToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
+dummy94 <- as.matrix(fo94@sdOffspringSize)
+dimnames(dummy94) <- list(1,"seedbank")
+dto94@sdToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
+dto94@discreteTrans[1,1] <- staySB + (1 - staySB)*fec3*fec4
 ```
+
+Now recreate the P matrix, considering the discrete stages
+
+```{r}
+Pmatrix94 <- makeIPMPmatrix(growObj=go94, survObj=so94, discreteTrans=dto94,
+minSize=minSize, maxSize=maxSize, nBigMatrix=80,correction="constant")
+library(fields)
+image.plot(c(Pmatrix94@meshpoints), c(Pmatrix94@meshpoints),
+(log10(t(Pmatrix94[1:80,1:80]))), main = "Pmatrix: survival/growth",
+xlab = "Size at t", ylab = "Size at t+1")
+#abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
+```
+
+```{r}
+IPM94 <- Pmatrix94 + Fmatrix94
+IPM94 %>% as_tibble() %>%
+  set_colnames(1:81) %>% 
+  mutate(size.t1=1:81) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) +
+  geom_contour(aes(z = value),lwd=.25) +
+  #geom_abline(intercept=0, slope = 1, color="gray90", lty=5) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "IPM Matrix") +
+  coord_equal() +
+  theme_bw()
+```
+### Julin F-Matrix
+
+Based on the text and my above modeling
+
+fec0 (flowering probability) is modeled as a binomal, with a cubic predictor on size
+fec1 (number of fruits) is modeled as Poisson, with a cubic predictor on size
+
+other parameters
+fec2: number of seed per fruit
+fec3: probability of germination (within the year of seed production)
+fec4: probability of seedling survival (within the year of seedling production)
+
+goSB: probability of a seed entering the seed bank
+staySB: probability of a seed staying in the seed bank
+
+For seed produced, need to model proportion that germinate vs going into the seed bank
+
+The  fecundity kernel should return the number of new plants produced of various sizes based on the sizes of the parent plant.
+
+The PDF defines the kernel as:
+
+fec0(z) * fec1(z)  * fec2 * (1−goSB) * fec3 * fec4 * fec5(z′) +
+fec0(z) * fec1(z) * fec2 * goSB * (1−staySB) * fec3 * fec4 * fec5(z′)
+
+The first line is seedlings produced from seed that don't go to the seed bank
+
+The second line is seedlings produced from seed that go to the seedbank but don't stay in the seed bank
+
+We aren't dealing with seeds previously in the seedbank, I assume we will later...
+
+```{r}
+
+fec1.coefs <- fec1.models %>% 
+  filter(name == "3_cubic") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  dplyr::select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params$fec1.int <- fec1.coefs %>% filter(term=="(Intercept)") %>%
+  pull(estimate)
+params$fec1.slope1 <- fec1.coefs %>% filter(term=="size") %>%
+  pull(estimate)
+params$fec1.slope2 <- fec1.coefs %>% filter(term=="I(size^2)") %>%
+  pull(estimate)
+params$fec1.slope3 <- fec1.coefs %>% filter(term=="I(size^3)") %>%
+  pull(estimate)
+params
+
+params$recruit.size.mean=mean(d94$sizeNext[is.na(d$size)], na.rm = TRUE)
+params$recruit.size.sd=sd(d94$sizeNext[is.na(d$size)], na.rm = TRUE)
+
+fruit.n <- function(x, params) {
+  exp(params$fec1.int + 
+        x*params$fec1.slope1 + 
+        x^2*params$fec1.slope2 + 
+        x^3*params$fec1.slope3)
+}
+
+# reality check (compare to plot...looks good)
+fruit.n(40, params)
+fruit.n(60, params)
+fruit.n(80, params)
+
+
+f.yx=function(xp,x,params) {
+# For seed produced this cycle and not going in to the seed bank
+  # flowering probability
+    predict(fec0.models$glm[[3]], data.frame(size=x), type="response") * 
+  # fruit production
+    fruit.n(x, params) *
+  # number of seed per fruit 
+    fec2 *
+  # probability of seed germinating at this time
+    (1-goSB) *
+  # probability of germination (is this not related to seed bank??)
+    fec3 *
+  # probability of seedling survival
+    fec4 *
+  # distribution of new sizes
+    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)
+  
+# For seed produced this cycle and then entering and exiting the seed bank
+  # For seed produced this cycle
+  # flowering probability
+    predict(fec0.models$glm[[3]], data.frame(size=x), type="response") * 
+  # fruit production
+    fruit.n(x, params) *
+  # number of seed per fruit 
+    fec2 *
+  # probability of seed germinating at this time
+    goSB * (1-staySB) *
+    # probability of germination (is this not related to seed bank??)
+    fec3 *
+  # probability of seedling survival
+    fec4 *
+  # distribution of new sizes
+    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)
+}
+```
+
+```{r}
+F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+
+F %>% as_tibble() %>%
+  set_colnames(y) %>% 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) +
+  #geom_contour(aes(z = value),lwd=.25) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "F Matrix") +
+  coord_equal() +
+  theme_bw()
+```
+
+
+
+
+
 
