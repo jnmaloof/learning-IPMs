@@ -278,7 +278,7 @@ Define the parameters for integration
 min.size=.9*min(c(d94$size, d94$sizeNext),na.rm=T)
 max.size=1.1*max(c(d94$size, d94$sizeNext),na.rm=T)
 
-n=100 # dimensions of the matrix
+n=80 # dimensions of the matrix
 
 b=min.size+c(0:n)*(max.size-min.size)/n # boundary points
 y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
@@ -484,18 +484,18 @@ Make the F Matrix:
 
 ```{r}
 Fmatrix94 <- makeIPMFmatrix(fecObj=fo94, minSize=minSize, maxSize=maxSize,
-nBigMatrix=80, correction="constant")
+                            nBigMatrix=80, correction="constant")
 ```
 
 plot it:
 ```{r,fig.asp=1}
 require(fields)
 image.plot(Fmatrix94@meshpoints,
-Fmatrix94@meshpoints,
-t(Fmatrix94[2:maxSize,2:maxSize]),
-main = "Fmatrix: fecundity",
-xlab = "Size at t",
-ylab = "Size at t+1")
+           Fmatrix94@meshpoints,
+           t(Fmatrix94[2:maxSize,2:maxSize]),
+           main = "Fmatrix: fecundity",
+           xlab = "Size at t",
+           ylab = "Size at t+1")
 ```
 ```{r}
 dto94 <- makeDiscreteTrans(d94)
@@ -512,11 +512,11 @@ Now recreate the P matrix, considering the discrete stages
 
 ```{r}
 Pmatrix94 <- makeIPMPmatrix(growObj=go94, survObj=so94, discreteTrans=dto94,
-minSize=minSize, maxSize=maxSize, nBigMatrix=80,correction="constant")
+                            minSize=minSize, maxSize=maxSize, nBigMatrix=80,correction="constant")
 library(fields)
 image.plot(c(Pmatrix94@meshpoints), c(Pmatrix94@meshpoints),
-(log10(t(Pmatrix94[1:80,1:80]))), main = "Pmatrix: survival/growth",
-xlab = "Size at t", ylab = "Size at t+1")
+           (log10(t(Pmatrix94[1:80,1:80]))), main = "Pmatrix: survival/growth",
+           xlab = "Size at t", ylab = "Size at t+1")
 #abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
 ```
 
@@ -600,37 +600,37 @@ fruit.n(80, params)
 
 
 f.yx=function(xp,x,params) {
-# For seed produced this cycle and not going in to the seed bank
+  # For seed produced this cycle and not going in to the seed bank
   # flowering probability
-    predict(fec0.models$glm[[3]], data.frame(size=x), type="response") * 
-  # fruit production
+  predict(fec0.models$glm[[3]], data.frame(size=x), type="response") * 
+    # fruit production
     fruit.n(x, params) *
-  # number of seed per fruit 
+    # number of seed per fruit 
     fec2 *
-  # probability of seed germinating at this time
+    # probability of seed not going to seed bank
     (1-goSB) *
-  # probability of germination (is this not related to seed bank??)
+    # probability of germination (is this not related to seed bank??)
     fec3 *
-  # probability of seedling survival
+    # probability of seedling survival
     fec4 *
-  # distribution of new sizes
-    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)
-  
-# For seed produced this cycle and then entering and exiting the seed bank
-  # For seed produced this cycle
-  # flowering probability
+    # distribution of new sizes
+    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd) # + 
+    
+    # For seed produced this cycle and then entering and exiting the seed bank
+    # For seed produced this cycle
+    # flowering probability
     predict(fec0.models$glm[[3]], data.frame(size=x), type="response") * 
-  # fruit production
+    # fruit production
     fruit.n(x, params) *
-  # number of seed per fruit 
+    # number of seed per fruit 
     fec2 *
-  # probability of seed germinating at this time
+    # probability of seed germinating at this time
     goSB * (1-staySB) *
     # probability of germination (is this not related to seed bank??)
     fec3 *
-  # probability of seedling survival
+    # probability of seedling survival
     fec4 *
-  # distribution of new sizes
+    # distribution of new sizes
     dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)
 }
 ```
@@ -651,6 +651,71 @@ F %>% as_tibble() %>%
   theme_bw()
 ```
 
+## Dissecting the IPMpack function
+
+The IPMpack function `makeIPMFmatrix` ultimate calls `.fecRaw`.  I paste the code from this below to try to understand what is going on.
+
+```{r}
+cov = data.frame(covariate = 1)
+
+fecObj <- fo94
+
+x <- y
+
+newd <- data.frame(cbind(cov, size = x), stringsAsFactors = FALSE)
+newd$size2 <- x^2
+newd$size3 <- x^3
+newd$expsize <- exp(x)
+fecObj@fecConstants[is.na(fecObj@fecConstants)] <- 1
+
+# Matrix to hold the new values
+fecValues <- matrix(c(rep(1, length(fecObj@fitFec)), unlist(fecObj@fecConstants)), 
+                    ncol = length(x), nrow = length(fecObj@fitFec) + length(fecObj@fecConstants))
+
+dim(fecValues) # 5 rows (1 for each of fec0, fec1, etc)
+# 80 columns, one for each value of x
+
+fecValues[,1:10]
+
+# Now for each vital rate model do the predictions
+# We have two prediction functions, so these will replace the "1"s in the first two rows of fecValues
+for (i in 1:length(fecObj@fitFec)) fecValues[i, ] <- predict(fecObj@fitFec[[i]], 
+                                                             newd, type = "response")
+
+# the updated values
+fecValues[,1:10]
+
+# this section will transform data in fecValues on a per-row basis, depending on the values in the @Transform slot
+if (length(grep("log", fecObj@Transform)) > 0) 
+  for (i in grep("log", fecObj@Transform)) fecValues[i, ] <- exp(fecValues[i, ])
+if (length(grep("exp", fecObj@Transform)) > 0) 
+  for (i in grep("exp", fecObj@Transform)) fecValues[i, ] <- log(fecValues[i, ])
+if (length(grep("sqrt", fecObj@Transform)) > 0) 
+  for (i in grep("sqrt", fecObj@Transform)) fecValues[i, ] <- (fecValues[i, ])^2
+if (length(grep("-1", fecObj@Transform)) > 0) 
+  for (i in grep("-1", fecObj@Transform)) fecValues[i, ] <- fecValues[i, ] + 1
+## WHY IS THE TRANSFORM FUNCTION ABOVE +1?  I GUESS THESE ARE BACK TRANFORMATIONS FROM A PREVIOUS TRANSFORMATION.
+
+# Now we apply the offspring splitter
+if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
+  
+  prodFecValues <- 
+    # subset the fecValue matrix to keep rows where "continuous" applies (in our case, all rows)
+    # then, calculate the product of the rates in each column
+    # this returns a vector of length y (80 in our case; aka x)
+    apply(
+      fecValues[which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1), ] , 2, prod) *
+    
+    # now multiple that vector of seed production by the offspring splitter value for "continuous" to keep those seed that are NOT going into the seedbank (1-goSB)
+    unlist(fecObj@offspringSplitter["continuous"])
+} else {
+   # this is if there is only 1 vital rate contributing to "continuous" in which case no multiplication is needed
+   # does not apply to us
+  prodFecValues <- fecValues[which(fecObj@vitalRatesPerOffspringType[, 
+                                                                     "continuous"] == 1), ] * unlist(fecObj@offspringSplitter["continuous"])
+}
+return(list(prodFecValues, fecValues))
+```
 
 
 
