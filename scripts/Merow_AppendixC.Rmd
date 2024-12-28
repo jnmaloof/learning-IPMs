@@ -451,7 +451,7 @@ d94 %>% filter(!is.na(fec1)) %>%
 ```
 
 put it together:
-```{r, eval = FALSE}
+```{r, eval = TRUE}
 d94$stage = factor(d94$stage)
 fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2, fec1~size+size2+size3),
                    Family=c("binomial", "poisson"),
@@ -469,6 +469,7 @@ fo94 <- makeFecObj(d94, Formula=c(fec0~size+size2, fec1~size+size2+size3),
                      row.names=c("fec0","fec1",
                                  "fec2","fec3","fec4")))
 ```
+
 ```{r}
 vitalRatesPerOffspringType=data.frame(seedbank=c(1,1,1,0,0),
                                       continuous=c(1,1,1,1,1),
@@ -614,7 +615,7 @@ f.yx=function(xp,x,params) {
     # probability of seedling survival
     fec4 *
     # distribution of new sizes
-    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd) # + 
+    dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)  + 
     
     # For seed produced this cycle and then entering and exiting the seed bank
     # For seed produced this cycle
@@ -633,6 +634,7 @@ f.yx=function(xp,x,params) {
     # distribution of new sizes
     dnorm(xp,mean=params$recruit.size.mean,sd=params$recruit.size.sd)
 }
+
 ```
 
 ```{r}
