@@ -484,8 +484,13 @@ aﬀect all propagules, whereas fec3 and fec4 only aﬀect seeds in the seed ban
 Make the F Matrix:
 
 ```{r}
+#Fmatrix94 <- makeIPMFmatrix(fecObj=fo94, minSize=minSize, maxSize=maxSize,
+#                            nBigMatrix=80, correction="constant")
+
+# Go with no correction for the moment, to try to reconcile with my code:
+
 Fmatrix94 <- makeIPMFmatrix(fecObj=fo94, minSize=minSize, maxSize=maxSize,
-                            nBigMatrix=80, correction="constant")
+                            nBigMatrix=80, correction="none")
 ```
 
 plot it:
@@ -653,11 +658,16 @@ F %>% as_tibble() %>%
   theme_bw()
 ```
 
-## Dissecting the IPMpack function
+## Dissecting the IPMpack functions
 
-The IPMpack function `makeIPMFmatrix` ultimate calls `.fecRaw`.  I paste the code from this below to try to understand what is going on.
+The IPMpack function `makeIPMFmatrix` ultimately calls `.fecPreCensus` which in turn calls `.fecRaw`.  I paste the code from this below to try to understand what is going on.
 
+Note that makeIPMFmatrix is using `outer()` to call `.fecPreCenesus` thereby generating a matrix.  In the code below I am just running it once (no outer).
+
+### .fecRaw
 ```{r}
+# this would get run for each pairwise combination of sizes in the matrix
+
 cov = data.frame(covariate = 1)
 
 fecObj <- fo94
@@ -675,9 +685,9 @@ fecValues <- matrix(c(rep(1, length(fecObj@fitFec)), unlist(fecObj@fecConstants)
                     ncol = length(x), nrow = length(fecObj@fitFec) + length(fecObj@fecConstants))
 
 dim(fecValues) # 5 rows (1 for each of fec0, fec1, etc)
-# 80 columns, one for each value of x
+# 1 columns, one for each value of x
 
-fecValues[,1:10]
+fecValues
 
 # Now for each vital rate model do the predictions
 # We have two prediction functions, so these will replace the "1"s in the first two rows of fecValues
@@ -685,7 +695,7 @@ for (i in 1:length(fecObj@fitFec)) fecValues[i, ] <- predict(fecObj@fitFec[[i]],
                                                              newd, type = "response")
 
 # the updated values
-fecValues[,1:10]
+fecValues
 
 # this section will transform data in fecValues on a per-row basis, depending on the values in the @Transform slot
 if (length(grep("log", fecObj@Transform)) > 0) 
@@ -697,6 +707,7 @@ if (length(grep("sqrt", fecObj@Transform)) > 0)
 if (length(grep("-1", fecObj@Transform)) > 0) 
   for (i in grep("-1", fecObj@Transform)) fecValues[i, ] <- fecValues[i, ] + 1
 ## WHY IS THE TRANSFORM FUNCTION ABOVE +1?  I GUESS THESE ARE BACK TRANFORMATIONS FROM A PREVIOUS TRANSFORMATION.
+fecValues
 
 # Now we apply the offspring splitter
 if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
@@ -708,7 +719,7 @@ if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
     apply(
       fecValues[which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1), ] , 2, prod) *
     
-    # now multiple that vector of seed production by the offspring splitter value for "continuous" to keep those seed that are NOT going into the seedbank (1-goSB)
+    # now multiply that vector of seed production by the offspring splitter value for "continuous" so that the rates reflect seed that are NOT going into the seedbank (1-goSB)
     unlist(fecObj@offspringSplitter["continuous"])
 } else {
    # this is if there is only 1 vital rate contributing to "continuous" in which case no multiplication is needed
@@ -716,10 +727,67 @@ if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
   prodFecValues <- fecValues[which(fecObj@vitalRatesPerOffspringType[, 
                                                                      "continuous"] == 1), ] * unlist(fecObj@offspringSplitter["continuous"])
 }
-return(list(prodFecValues, fecValues))
+
+#     return(list(prodFecValues, fecValues))
+
+# The end result of this (prodFecValues) is a vector of 80 rates, that represent seed production for each of the 80 size classes.
+# This will eventually be one row in the fecundity matrix, after we do additional calculations
+# To get the F Matrix from this, we need to calculate the size classes from new germinants.  That code is in `.fecPreCensus`
 ```
 
+### .fecPreCensus
 
+```{r}
+# these arguments are set in the function call.  the code below sets it up the way it is being run for Appendix C
+cov = data.frame(covariate = 1)
+offspringObj = NULL
+
+# calculate this for a single value of SizeNext:
+this.y <- y[2]
+
+  newd <- data.frame(cbind(cov, size = x), stringsAsFactors = FALSE)
+  newd$size2 <- x^2
+  newd$size3 <- x^3
+  
+  
+  if (is.null(offspringObj)) { # TRUE for us
+    if (length(grep("expsize", fecObj@offspringRel$formula)) > 
+        0) { # FALSE
+      newd$expsize <- exp(x)
+    }
+    if (length(grep("logsize", fecObj@offspringRel$formula)) > 
+        0) { # FALSE
+      newd$logsize <- log(x)
+    }
+    
+# the line below is getting called.  I am commenting it out and rewriting because it calls `.fecRaw` and I already calculated that above  
+ #   u <- .fecRaw(x = x, cov = cov, fecObj = fecObj)[[1]] * 
+ #   dnorm(y, predict(fecObj@offspringRel, newdata = newd, 
+ #                       type = "response"), fecObj@sdOffspringSize)
+    u <- prodFecValues*
+      dnorm(this.y, predict(fecObj@offspringRel, newdata = newd, 
+                       type = "response"), fecObj@sdOffspringSize)
+  } else {
+    u <- .fecRaw(x = x, cov = cov, fecObj = fecObj)[[1]] * 
+      growth(y, y, newd, offspringObj)
+  }
+#  return(u)
+
+  u
+  
+  # u is a vector of 80 that will be one row in the F matrix.
+  # The way I set this up it is the row that represents the second smallest size class
+  # It gives the production rates of new seedlings of different sizes based on parent size classes
+  # It still needs to be corrected for grid size, etc.
+  
+```
+
+```{r}
+tmp <- u*h # correct for cell size
+plot(u, Fmatrix94[3, -1]) # Compare to IPMpack F Matrix
+plot(u, F[2,]) # Compare to JNM F Matrix
+```
+So, this matches what I hand calculated, but not the final IPM pack F matrix.  So...let's keep working with the code in IPM Matrix.  NEXT STEPS: CODE FROM `makeIPMFmatrix()`
 
 
 
