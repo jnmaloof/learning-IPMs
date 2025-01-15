@@ -254,6 +254,9 @@ params$growth.slope <- growth.coefs %>% filter(term=="size") %>% pull(estimate)
 
 # I am pulling sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed.  
 params$growth.sd <- growth.models %>% filter(name=="1_linear") %>% unnest(glance) %>% pull(sigma)
+
+params$recruit.size.mean=mean(d94$sizeNext[is.na(d$size)], na.rm = TRUE)
+params$recruit.size.sd=sd(d94$sizeNext[is.na(d$size)], na.rm = TRUE)
 ```
 
 Set up the functions
@@ -275,15 +278,11 @@ g.yx=function(xp,x,params) {
 Make a kernel
 Define the parameters for integration
 ```{r}
-# the sizes we are integrating over
-min.size=.9*min(c(d94$size, d94$sizeNext),na.rm=T)
-max.size=1.1*max(c(d94$size, d94$sizeNext),na.rm=T)
+nBigMatrix <- 80 # matrix dimensions
+  b <- minSize + c(0:nBigMatrix) * (maxSize - minSize)/nBigMatrix # boundary points
+  y <- 0.5 * (b[1:nBigMatrix] + b[2:(nBigMatrix + 1)]) # mesh points
+  h <- y[2] - y[1] # step size
 
-n=80 # dimensions of the matrix
-
-b=min.size+c(0:n)*(max.size-min.size)/n # boundary points
-y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
-h=y[2]-y[1] # step size
 ```
 
 Make the matrix
@@ -513,12 +512,20 @@ dto94@meanToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
 dummy94 <- as.matrix(fo94@sdOffspringSize)
 dimnames(dummy94) <- list(1,"seedbank")
 dto94@sdToCont <- as.matrix(dummy94,dimnames=c(1,"seedbank"))
-dto94@discreteTrans[1,1] <- staySB + (1 - staySB)*fec3*fec4
+dto94@discreteTrans[1,1] <- staySB + (1 - staySB)*fec3*fec4 ## I think this is incorrect
+
+# Correct code should be:
+# dto94@discreteTrans[1:2,1] <- c(staySB, (1 - staySB)*fec3*fec4)
+# commented out for now, so I can match appendix C
+
+
 ```
 
 Now recreate the P matrix, considering the discrete stages
 
 ```{r}
+Pmatrix94.old <- Pmatrix94 # for comparison, so I can understand what changed
+
 Pmatrix94 <- makeIPMPmatrix(growObj=go94, survObj=so94, discreteTrans=dto94,
                             minSize=minSize, maxSize=maxSize, nBigMatrix=80,correction="constant")
 library(fields)
@@ -527,6 +534,48 @@ image.plot(c(Pmatrix94@meshpoints), c(Pmatrix94@meshpoints),
            xlab = "Size at t", ylab = "Size at t+1")
 #abline(a = 0, b = 1, lty= 2, col = "white", lwd=2)
 ```
+```{r}
+dim(Pmatrix94.old)
+dim(Pmatrix94)
+
+Pmatrix94[1:5, 1:5]
+Pmatrix94[2:6, 2:6]
+Pmatrix94.old[1:5, 1:5]
+
+Pmatrix94[77:81, 77:81]
+Pmatrix94.old[76:80, 76:80]
+
+all.equal(Pmatrix94[-1, -1], Pmatrix94.old[,])
+```
+So the first row and column are new, everything else is the same.
+
+Now size "1" (or the first row and column) represent seed, or seedbank
+
+The first column represents the size of new recruits from the seed bank.
+
+plot the first column
+
+```{r}
+plot(Pmatrix94[,1], type="l")
+plot(Pmatrix94[2:20,1], type="l")
+```
+
+After removing the first cell, this is peaking near 4, which is consistent with the average size of new recruits (4.36)
+
+What is the first cell? This is seed that stay in the seed bank.
+```{r}
+Pmatrix94[1,1]
+staySB
+```
+
+What about the first row?
+
+```{r}
+plot(Pmatrix94[1,], type = "l")
+plot(Pmatrix94[1,-1], type = "l")
+
+```
+I would have thought that this is seed going to the seedbank from parent plants of different sizes but it doesn't make any sense for it to be peaking at 25, fecundity is ~ 0 at this stage.  Also seems like maybe this should just be handled by the F-matrix and this could be set to zero?
 
 ```{r}
 IPM94 <- Pmatrix94 + Fmatrix94
@@ -543,7 +592,43 @@ IPM94 %>% as_tibble() %>%
   coord_equal() +
   theme_bw()
 ```
+
+### Julin Update P-Matrix to include seed from seedbank
+
+```{r}
+
+correction <- "constant"
+
+toContinuousP <- dnorm(y, params$recruit.size.mean, params$recruit.size.sd) * h
+
+if (correction == "constant") 
+        toContinuousP <- toContinuousP/sum(toContinuousP)
+
+toContinuousP[which(is.na(toContinuousP))] <- 0
+
+toContinuousP <- toContinuousP * 9.169973e-05 # This is the value in dto94, calculated from observations in the `makeDiscreteTrans` function
+
+# Alternative, and I think this is what they meant to do (but had a typo)
+# toContinuousP <- toContinuousP * (1 - staySB)*fec3*fec4 
+
+toDiscreteP <- c(staySB, rep(0,ncol(Pc))) # in our case, continuous plants do not transition to the discrete class.  Seed going to seedbank is handled by F, see below.
+
+Pc <- rbind(toDiscreteP, cbind(toContinuousP, Pc))
+```
+
+compare it
+```{r}
+range(Pc)
+range(Pmatrix94)
+
+Pc[1:5, 1:5]
+Pmatrix94[1:5, 1:5]
+```
+
+
 ### Julin F-Matrix
+
+I SHOULD UPDATE THIS TO INCLUDE THE "CORRECTION" CODE, LIKE I DID FOR THE P MATRIX
 
 Based on the text and my above modeling
 
@@ -590,9 +675,6 @@ params$fec1.slope2 <- fec1.coefs %>% filter(term=="I(size^2)") %>%
 params$fec1.slope3 <- fec1.coefs %>% filter(term=="I(size^3)") %>%
   pull(estimate)
 params
-
-params$recruit.size.mean=mean(d94$sizeNext[is.na(d$size)], na.rm = TRUE)
-params$recruit.size.sd=sd(d94$sizeNext[is.na(d$size)], na.rm = TRUE)
 
 fruit.n <- function(x, params) {
   exp(params$fec1.int + 
@@ -654,9 +736,48 @@ nBigMatrix <- 80
   y <- 0.5 * (b[1:nBigMatrix] + b[2:(nBigMatrix + 1)])
   h <- y[2] - y[1]
   
-F=h*outer(y,y,f.yx,params=params) # reproduction matrix
+toContinuousF=h*outer(y,y,f.yx,params=params) # reproduction matrix for seed that germinate in this cycle
+```
 
+Update the matrix for the discrete classes
+```{r}
+fToSeedbank.x=function(x,params) {
+  # For seed produced this cycle and going to the seed bank
+  # flowering probability
+  predict(fec0.models$glm[[3]], data.frame(size=x), type="response") * 
+    # fruit production
+    fruit.n(x, params) *
+    # number of seed per fruit 
+    fec2 *
+    # probability of seed going to seedbank
+    (goSB)
+}
+
+toDiscreteF <- fToSeedbank.x(y, params = params)
+
+fromDiscreteF <- rep(0, nrow(toContinuousF) + 1) # 0 because the discrete class (seedbank) is not contributing seed
+                                    # length is nrow + 1 because the matrix is being expanded for the discrete class
+                                    # This would need to be a matrix instead of a vector if there were more than 1 discrete class
+
+F <- cbind(fromDiscreteF, rbind(toDiscreteF, toContinuousF))
+```
+
+Plot it
+```{r}
 F %>% as_tibble() %>%
+  set_colnames(c(0.5,y)) %>% 
+  mutate(size.t1=c(0.5,y)) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) +
+  #geom_contour(aes(z = value),lwd=.25) +
+  scale_fill_viridis_c(option = "plasma") +
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "F Matrix") +
+  coord_equal() +
+  theme_bw()
+```
+```{r}
+F[2:maxSize,2:maxSize] %>% as_tibble() %>%
   set_colnames(y) %>% 
   mutate(size.t1=y) %>%
   pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
@@ -668,6 +789,26 @@ F %>% as_tibble() %>%
   coord_equal() +
   theme_bw()
 ```
+Compare to IPM F-matrix
+First compare the toDiscrete row:
+```{r}
+plot(F[1,], Fmatrix94[1,])
+abline(1,1)
+```
+
+```{r}
+range(F)
+range(Fmatrix94)
+range(F[-1,])
+range(Fmatrix94[-1,])
+```
+
+### MAke the IPMmatrix
+
+```{r}
+I <- Pc + F
+```
+
 
 ## Dissecting the IPMpack functions
 
@@ -739,7 +880,7 @@ if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
     apply(
       fecValues[which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1), ] , 2, prod) *
     
-    # now multiply that vector of seed production by the offspring splitter value for "continuous" so that the rates reflect seed that are NOT going into the seedbank (1-goSB)
+    # now multiply that vector of seed production by the offspring spliter value for "continuous" so that the rates reflect seed that are NOT going into the seedbank (1-goSB)
     unlist(fecObj@offspringSplitter["continuous"])
 } else {
   # this is if there is only 1 vital rate contributing to "continuous" in which case no multiplication is needed
@@ -866,7 +1007,7 @@ if (nDisc > 0) { # TRUE for us
   
   # This section calculates the number of offspring from the discrete class
   # this is Zero, I guess because seed are not producing more seed
-  # But what about seed exiting the seedbank??
+  # Seed exiting the seedbank are dealt with in the size/growth matrix
   
   from.discrete <- matrix(0, ncol = nDisc, nrow = nDisc + nBigMatrix)
   
