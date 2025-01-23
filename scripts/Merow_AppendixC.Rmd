@@ -282,7 +282,6 @@ nBigMatrix <- 80 # matrix dimensions
   b <- minSize + c(0:nBigMatrix) * (maxSize - minSize)/nBigMatrix # boundary points
   y <- 0.5 * (b[1:nBigMatrix] + b[2:(nBigMatrix + 1)]) # mesh points
   h <- y[2] - y[1] # step size
-
 ```
 
 Make the matrix
@@ -294,7 +293,7 @@ G=h*outer(y,y,g.yx,params=params) # growth matrix
 S=s.x(y,params=params) # survival
 # F=h*outer(y,y,f.yx,params=params) # reproduction matrix
 P=G # placeholder; redefine P on the next line
-for(i in 1:n) P[,i]=G[,i]*S[i] # growth/survival matrix
+for(i in 1:nBigMatrix) P[,i]=G[,i]*S[i] # growth/survival matrix
 # K=P+F # full matrix
 ```
 
@@ -776,6 +775,7 @@ F %>% as_tibble() %>%
   coord_equal() +
   theme_bw()
 ```
+
 ```{r}
 F[2:maxSize,2:maxSize] %>% as_tibble() %>%
   set_colnames(y) %>% 
@@ -812,12 +812,14 @@ I <- Pc + F
 
 ## Dissecting the IPMpack functions
 
+CODE BELOW HERE IS ME TRYING TO UNDERSTAND THE IPMPACK FUNCTIONS.  IT DOES NOT NEED TO BE RUN.
+
 The IPMpack function `makeIPMFmatrix` ultimately calls `.fecPreCensus` which in turn calls `.fecRaw`.  I paste the code from this below to try to understand what is going on.
 
 Note that makeIPMFmatrix is using `outer()` to call `.fecPreCenesus` thereby generating a matrix.  In the code below I am just running it once (no outer).
 
 ### .fecRaw
-```{r}
+```{r, eval=FALSE}
 # this would get run for each pairwise combination of sizes in the matrix
 
 cov = data.frame(covariate = 1)
@@ -843,7 +845,7 @@ fecValues
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 # Now for each vital rate model do the predictions
 # We have two prediction functions, so these will replace the "1"s in the first two rows of fecValues
 for (i in 1:length(fecObj@fitFec)) fecValues[i, ] <- predict(fecObj@fitFec[[i]], 
@@ -854,7 +856,7 @@ fecValues
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 # this section will transform data in fecValues on a per-row basis, depending on the values in the @Transform slot
 if (length(grep("log", fecObj@Transform)) > 0) 
   for (i in grep("log", fecObj@Transform)) fecValues[i, ] <- exp(fecValues[i, ])
@@ -869,7 +871,7 @@ fecValues
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 # Now we apply the offspring splitter
 if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
   
@@ -899,7 +901,7 @@ if (length(which(fecObj@vitalRatesPerOffspringType[, "continuous"] == 1)) > 1) {
 ### .fecPreCensus
 
 For a single value of SizeNext
-```{r}
+```{r, eval=FALSE}
 # these arguments are set in the function call.  the code below sets it up the way it is being run for Appendix C
 cov = data.frame(covariate = 1)
 offspringObj = NULL
@@ -944,7 +946,7 @@ u
 
 ```
 
-```{r, fig.asp=1}
+```{r, fig.asp=1, eval=FALSE}
 tmp2 <- u*h # correct for cell size
 plot(tmp2, Fmatrix94[3, -1]) # Compare to IPMpack F Matrix
 abline(0,1)
@@ -962,7 +964,7 @@ I am commenting out code that is not applicable to us, just for readability
 
 First generate the basic F matrix (seed being produced from current plants...this is what was picked apart above):
 
-```{r}
+```{r, eval=FALSE}
 chosenCov = data.frame(covariate = 1)
 
  tmp <- t(outer(X = y, Y = y, .fecPreCensus, cov = chosenCov, 
@@ -971,7 +973,7 @@ chosenCov = data.frame(covariate = 1)
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 nBigMatrix <- 80
 chosenCov = data.frame(covariate = 1)
 nEnvClass = 1
@@ -1045,7 +1047,7 @@ rc[, ] <- get.matrix
 ```
 
 
-```{r}
+```{r, eval=FALSE}
 range(rc[-1,]) # The matrix from dissecting IPMpack code
 range(F[-1,]) # My hand calculated one
 range(Fmatrix94[-1,]) # The matrix from using IPMpack functions
