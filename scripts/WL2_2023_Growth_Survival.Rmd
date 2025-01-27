@@ -1,0 +1,176 @@
+---
+title: "WL2023_Size_Growth"
+author: "Julin Maloof"
+date: "2025-01-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Intitial attempt at making a growth/survival matrix from WL2 2023
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+conflicted::conflict_prefer("select", "dplyr")
+conflicted::conflict_prefer("filter", "dplyr")
+conflicted::conflict_prefer("lag", "dplyr")
+```
+
+## Import the data
+
+```{r}
+growth <- read_csv("../input/WL2-2023_Size_Combined.csv")
+growth
+```
+
+```{r}
+survival <- read_csv("../input/WL2_Mortality.csv")
+survival
+```
+
+## Wrangle Growth
+
+We want to predict size next from size.  In the Merow examples there was a column "size" and "size next" for each time step.  I guess we are going to need to do that here.
+
+We also should compute the interval length 
+
+```{r}
+growth2 <- growth %>% arrange(Genotype, survey_date) %>%
+  select(-survey.notes, -long.leaf.cm) %>%
+  group_by(Genotype) %>%
+  mutate(height.cm.next = lead(height.cm),
+         elapsed_days= lead(survey_date) - survey_date,
+         elapsed_weeks = as.integer(elapsed_days)/7) %>%
+  ungroup() %>%
+  drop_na(height.cm, height.cm.next)
+
+growth2 
+```
+
+For easy visualization lets subset just to elapsed_days of 7
+
+```{r}
+growth2 %>%
+  filter(elapsed_days==7) %>%
+  ggplot(aes(x=height.cm, y=height.cm.next)) +
+  geom_point(aes(color=parent.pop), alpha = 0.3) +
+  geom_abline() +
+  geom_smooth(method="lm")
+```
+
+Do some model comparison
+
+
+```{r}
+minSize <- min(growth2$height.cm, na.rm = TRUE)
+maxSize <- max(growth2$height.cm, na.rm = TRUE)
+
+# newdata = tibble(height.cm=seq(minSize, maxSize, length.out=101), elapsed_weeks = 1)
+
+growth.models <- tribble(
+  ~name,          ~f,
+  "1_intercept",              "height.cm.next ~ 1", 
+  "2_linear",                 "height.cm.next ~ height.cm", 
+  "3_linear_with_weeks",      "height.cm.next ~ height.cm*elapsed_weeks",
+  "4_linear_with_weeks_pops_2way", "height.cm.next ~ height.cm*elapsed_weeks + height.cm*parent.pop + elapsed_weeks*parent.pop",
+  "5_linear_with_weeks_pops_3way", "height.cm.next ~ height.cm*elapsed_weeks*parent.pop",
+  "6_quadratic",              "height.cm.next ~ height.cm + I(height.cm^2)", 
+  "7_cubic",                  "height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3)",
+  "8_quadratic_full",         "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2)", 
+  "9_cubic_full",             "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + I(height.cm^3)"
+)
+     
+
+
+growth.models <- growth.models %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), data = growth2) ),
+         predict = map(lm, predict), # predicting from original data...
+         glance = map(lm, glance))
+
+growth.models %>% select(-f, -lm) %>% unnest(glance) %>% arrange(AIC)
+```
+
+```{r, fig.asp=1}
+growth2 %>% 
+  cbind(predicted={growth.models %>% filter(name=="4_linear_with_weeks_pops_2way") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=height.cm.next, y = predicted)) +
+  geom_point(alpha=.2) +
+  geom_abline(color="skyblue2") +
+  facet_wrap(~parent.pop, scales="free")
+```
+
+```{r, fig.asp=1}
+growth2 %>% 
+  cbind(predicted={growth.models %>% filter(name=="5_linear_with_weeks_pops_3way") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=height.cm.next, y = predicted)) +
+  geom_point(alpha=.2) +
+  geom_abline(color="skyblue2") +
+  facet_wrap(~parent.pop, scales="free")
+```
+
+For plotting the prediction curve, it looks like I can't combine `geom_function` and `facet_wrap` so I will compute the prediction curves myself and then combine in the plots
+
+```{r}
+curves <- growth2 %>%
+  group_by(parent.pop) %>%
+  summarize(minSize = min(height.cm, na.rm = TRUE),
+            maxSize = max(height.cm, na.rm = TRUE)) %>%
+  
+  # generate a "newdata" data frame for each parent.pop
+  mutate(newdata = pmap(list(parent.pop, minSize, maxSize), \(p, x, y) tibble(parent.pop = p,
+                                                        elapsed_weeks = 1,
+                                                        height.cm = seq(x, y, length.out = 101)))) %>%
+
+ # predictions for each parent.pop
+  mutate(predict4 = map(newdata, \(nd) predict(growth.models$lm[[4]], newdata = nd)),
+         predict5 = map(newdata, \(nd) predict(growth.models$lm[[5]], newdata = nd))) %>%
+
+  # unnest to plot
+  unnest(cols = c(newdata, predict4, predict5), names_repair = "minimal") %>%
+  
+  # pivoting for easier plotting
+  pivot_longer(cols = c(predict4, predict5), names_to = "model", values_to = "height.cm.next")
+
+curves
+```
+
+```{r, fig.asp=1}
+growth2 %>%
+  ggplot(aes(x=height.cm, y = height.cm.next)) +
+  geom_point() +
+  geom_line(aes(color = model), data = curves) +
+  facet_wrap(~parent.pop, scales = "free")
+```
+
+As expected, the models are quite similar.  Let's go with the simpler one.
+
+```{r}
+growth.model.final <- growth.models %>% filter(name == "4_linear_with_weeks_pops_2way") %>% pull(lm) %>% magrittr::extract2(1)
+```
+
+ PROBABLY SHOULD USE LMER AND POP AS A RANDOM EFFECT INSTEAD OF THE LM
+
+## On to survival
+
+Since we want to predict survival as a function of size, we need to combine the data sets
+
+```{r}
+survival2 <- survival %>% select(Genotype, death.date) %>%
+  right_join(growth) %>%
+  mutate(death.date = lubridate::mdy(death.date),
+         surv = ifelse(is.na(death.date), 1, death.date >= survey_date) ) %>%
+  
+  # because we don't have height measurement on the day death is observed we need a new column, height previous
+  arrange(Genotype, survey_date) %>% 
+  group_by(Genotype) %>%
+  mutate(height.cm.prev = lag(height.cm))
+
+# check it
+survival2 %>% select(Genotype, death.date, survey_date, surv, height.cm, height.cm.prev)
+```
+
+
+
