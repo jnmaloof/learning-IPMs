@@ -43,7 +43,8 @@ growth2 <- growth %>% arrange(Genotype, survey_date) %>%
   group_by(Genotype) %>%
   mutate(height.cm.next = lead(height.cm),
          elapsed_days= lead(survey_date) - survey_date,
-         elapsed_weeks = as.integer(elapsed_days)/7) %>%
+         elapsed_weeks = as.integer(elapsed_days)/7,
+         survey_date_char = as.character(survey_date)) %>%
   ungroup() %>%
   drop_na(height.cm, height.cm.next)
 
@@ -76,6 +77,8 @@ growth.models <- tribble(
   "2_linear",                 "height.cm.next ~ height.cm", 
   "3_linear_with_weeks",      "height.cm.next ~ height.cm*elapsed_weeks",
   "4_linear_with_weeks_pops_2way", "height.cm.next ~ height.cm*elapsed_weeks + height.cm*parent.pop + elapsed_weeks*parent.pop",
+  "4b_linear_with_survey_date_pops_2way", "height.cm.next ~ height.cm*survey_date_char + height.cm*parent.pop + survey_date_char*parent.pop",
+
   "5_linear_with_weeks_pops_3way", "height.cm.next ~ height.cm*elapsed_weeks*parent.pop",
   "6_quadratic",              "height.cm.next ~ height.cm + I(height.cm^2)", 
   "7_cubic",                  "height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3)",
@@ -90,7 +93,7 @@ growth.models <- growth.models %>%
          predict = map(lm, predict), # predicting from original data...
          glance = map(lm, glance))
 
-growth.models %>% select(-f, -lm) %>% unnest(glance) %>% arrange(BIC)
+growth.models %>% select(-f, -lm) %>% unnest(glance) %>% arrange(AIC)
 ```
 
 ```{r, fig.asp=1}
