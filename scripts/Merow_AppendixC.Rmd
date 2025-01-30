@@ -810,6 +810,16 @@ I <- Pc + F
 ```
 
 
+Calculate lambda
+
+```{r}
+Re(eigen(IPM94)$value[1])
+```
+
+Close.  The lambda from the PDF is 0.8922246
+
+I'm not yet doing the F-matrix correction, so that could be it.
+
 ## Dissecting the IPMpack functions
 
 CODE BELOW HERE IS ME TRYING TO UNDERSTAND THE IPMPACK FUNCTIONS.  IT DOES NOT NEED TO BE RUN.
