@@ -736,6 +736,11 @@ nBigMatrix <- 80
   h <- y[2] - y[1]
   
 toContinuousF=h*outer(y,y,f.yx,params=params) # reproduction matrix for seed that germinate in this cycle
+
+# uncomment below and add in for correction
+      # correction.here <- .fecRaw(x = y, cov = chosenCov, 
+      #                            fecObj = fecObj)[[1]]/colSums(tmp)
+      # tmp <- t(t(tmp) * correction.here)
 ```
 
 Update the matrix for the discrete classes
@@ -813,10 +818,16 @@ I <- Pc + F
 Calculate lambda
 
 ```{r}
-Re(eigen(IPM94)$value[1])
+Re(eigen(IPM94)$value[1]) # theirs
 ```
 
-Close.  The lambda from the PDF is 0.8922246
+Mine:
+
+```{r}
+Re(eigen(I)$value[1]) # mine
+```
+
+Very close.  The lambda from the PDF is 0.8922246
 
 I'm not yet doing the F-matrix correction, so that could be it.
 
