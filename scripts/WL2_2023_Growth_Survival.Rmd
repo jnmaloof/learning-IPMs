@@ -80,6 +80,8 @@ growth.models <- tribble(
   "4b_linear_with_survey_date_char_pops_2way", "height.cm.next ~ height.cm*survey_date_char + height.cm*parent.pop + survey_date_char*parent.pop",
   "4c_linear_with_survey_date_pops_2way", "height.cm.next ~ height.cm*survey_date + height.cm*parent.pop + survey_date*parent.pop",
   "5_linear_with_weeks_pops_3way", "height.cm.next ~ height.cm*elapsed_weeks*parent.pop",
+    "5b_linear_with_survey_date_char_pops_3way", "height.cm.next ~ height.cm*survey_date_char*parent.pop",
+
   "6_quadratic",              "height.cm.next ~ height.cm + I(height.cm^2)", 
   "7_cubic",                  "height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3)",
   "8_quadratic_full",         "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2)", 
@@ -93,7 +95,7 @@ growth.models <- growth.models %>%
          predict = map(lm, predict), # predicting from original data...
          glance = map(lm, glance))
 
-growth.models %>% select(-f, -lm) %>% unnest(glance) %>% arrange(AIC)
+growth.models %>% select(-f, -lm) %>% unnest(glance) %>% arrange(BIC)
 ```
 
 ```{r, fig.asp=1}
