@@ -14,10 +14,10 @@ Intitial attempt at making a growth/survival matrix from WL2 2023, now using ran
 ```{r}
 library(tidyverse)
 library(tidymodels)
+library(multilevelmod)
 library(lmerTest)
 library(broom.mixed)
 library(furrr)
-plan(multisession, workers = 7)
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter", "dplyr")
 conflicted::conflict_prefer("lag", "dplyr")
@@ -68,12 +68,16 @@ growth2 %>%
 
 Do some model comparison
 
+Define the formula
+
 
 ```{r}
 minSize <- min(growth2$height.cm, na.rm = TRUE)
 maxSize <- max(growth2$height.cm, na.rm = TRUE)
-
 # newdata = tibble(height.cm=seq(minSize, maxSize, length.out=101), elapsed_weeks = 1)
+
+lmer_spec <- linear_reg() %>%
+  set_engine("lmer")
 
 growth.models <- tribble(
   ~name,          ~f,
@@ -90,12 +94,23 @@ growth.models <- tribble(
   "11_cubic.parent.mf.block",           "height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|parent.pop/mf) + (1|block)",
   "12_quadratic_weeks.parent.height.slope",         "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + (height.cm + I(height.cm^2) | parent.pop / mf) + (height.cm + I(height.cm^2) | block)", 
   "13_cubic_weeks.parent.height.slope",             "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + I(height.cm^3) + (height.cm + I(height.cm^2) | parent.pop) + (height.cm + I(height.cm^2) | block)"
-)
-     
+) %>%
+  rowwise() %>%
+  mutate(f = list(as.formula(f))) %>%
+  ungroup()
+```
+
+Fit the models
+
+```{r}
+system.time( { # 42 seconds
 growth.models <- growth.models %>%
-  mutate(fit = future_map(f, ~ lmerTest::lmer(as.formula(.), data = growth2) ),
-         predict = map(fit, predict), # predicting from original data...
-         glance = map(fit, glance))
+  mutate(spec = list(lmer_spec),
+    fit = map2(spec, f,  parsnip::fit, data = growth2),
+    glance = map(fit, glance)
+) %>%
+  select(-spec)
+})
 
 growth.models %>% select(-f, -fit) %>% unnest(glance) %>% arrange(BIC)
 ```
@@ -113,6 +128,18 @@ growth.models %>% filter(name=="9_linear_with_weeks_int.parent.all.slope") %>%
   magrittr::extract2(1) %>%
   tidy()
 ```
+
+Concentrate on the three best models and do some cross-validation to better assess predictive power
+```{r}
+growth.models.best <- growth.models %>%
+  unnest(glance) %>%
+  slice_min(AIC, n=3) 
+
+set.seed(1001)
+growth_folds <- vfold_cv(growth2, v = 10)
+growth_folds
+```
+
 
 ```{r, fig.asp=1}
 growth2 %>% 
