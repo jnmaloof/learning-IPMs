@@ -17,7 +17,8 @@ library(tidymodels)
 library(multilevelmod)
 library(lmerTest)
 library(broom.mixed)
-library(furrr)
+library(doMC)
+registerDoMC(cores = 7)
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter", "dplyr")
 conflicted::conflict_prefer("lag", "dplyr")
@@ -75,55 +76,96 @@ Define the formula
 minSize <- min(growth2$height.cm, na.rm = TRUE)
 maxSize <- max(growth2$height.cm, na.rm = TRUE)
 # newdata = tibble(height.cm=seq(minSize, maxSize, length.out=101), elapsed_weeks = 1)
+```
 
+
+In order to be able to use the tidymodel tools on mixed effect models, it works best to add variables and formulas in the following way.  This is a bit cumbersome, but it will help later.
+```{r}
 lmer_spec <- linear_reg() %>%
   set_engine("lmer")
 
-growth.models <- tribble(
-  ~name,          ~f,
-  "1_block",                         "height.cm.next ~ (1|block)",
-  "2_parent",                        "height.cm.next ~ (1|parent.pop)",
-  "3_block.parent",                  "height.cm.next ~ (1|parent.pop) + (1|block)",
-  "4_block.parent.mf",               "height.cm.next ~ (1|parent.pop/mf) + (1|block)",
-  "5_linear.parent.mf.block",        "height.cm.next ~ height.cm + (1|parent.pop/mf) + (1|block)",
-  "6_linear.parent.mf.block.slope",                        "height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (1|block)", 
-  "7_linear.parent.mf.block.slope.slope",                  "height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (height.cm|block)", 
-  "8_linear_with_weeks_int.parent",                        "height.cm.next ~ height.cm*elapsed_weeks + (1|parent.pop/mf) + (1|block)",
-  "9_linear_with_weeks_int.parent.all.slope",              "height.cm.next ~ height.cm*elapsed_weeks + (height.cm + elapsed_weeks|parent.pop/mf) + (height.cm + elapsed_weeks|block)",
-  "10_quadratic.parent.mf.block",       "height.cm.next ~ height.cm + I(height.cm^2) + (1|parent.pop/mf) + (1|block)", 
-  "11_cubic.parent.mf.block",           "height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|parent.pop/mf) + (1|block)",
-  "12_quadratic_weeks.parent.height.slope",         "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + (height.cm + I(height.cm^2) | parent.pop / mf) + (height.cm + I(height.cm^2) | block)", 
-  "13_cubic_weeks.parent.height.slope",             "height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + I(height.cm^3) + (height.cm + I(height.cm^2) | parent.pop) + (height.cm + I(height.cm^2) | block)"
-) %>%
-  rowwise() %>%
-  mutate(f = list(as.formula(f))) %>%
-  ungroup()
+growth_wflow <- workflow() %>%
+  add_variables(outcomes = height.cm.next, predictors = c(height.cm, elapsed_weeks, parent.pop, mf, block)) 
+
+growth.models <- tibble(wflow=list(
+  m1_block = {growth_wflow %>%
+      add_model(lmer_spec,
+                formula = height.cm.next ~ (1|block)) },
+  
+  m2_parent = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ (1|parent.pop) )},
+  
+  m3_block.parent = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ (1|parent.pop) + (1|block) )},
+  
+  m4_block.parent.mf = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ (1|parent.pop/mf) + (1|block) )},
+  
+  m5_linear.parent.mf.block = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm + (1|parent.pop/mf) + (1|block) )},
+  
+  m6_linear.parent.mf.block.slope = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (1|block) )},
+  
+  m7_linear.parent.mf.block.slope.slope = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (height.cm|block) )},
+  
+  m8_linear_with_weeks_int.parent = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm*elapsed_weeks + (1|parent.pop/mf) + (1|block) )},
+  
+  m9_linear_with_weeks_int.parent.all.slope = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm*elapsed_weeks + (height.cm + elapsed_weeks|parent.pop/mf) + (height.cm + elapsed_weeks|block) )},
+  
+  m10_quadratic.parent.mf.block = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm + I(height.cm^2) + (1|parent.pop/mf) + (1|block) )},
+  
+  m11_cubic.parent.mf.block = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|parent.pop/mf) + (1|block) )},
+  
+  m12_quadratic_weeks.parent.height.slope = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + (height.cm + I(height.cm^2) | parent.pop / mf) + (height.cm + I(height.cm^2) | block) )}, 
+  
+  m13_cubic_weeks.parent.height.slope = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + I(height.cm^3) + (height.cm + I(height.cm^2) | parent.pop) + (height.cm + I(height.cm^2) | block) )}
+),
+name = names(wflow)
+)
 ```
 
 Fit the models
 
 ```{r}
-system.time( { # 42 seconds
-growth.models <- growth.models %>%
-  mutate(spec = list(lmer_spec),
-    fit = map2(spec, f,  parsnip::fit, data = growth2),
-    glance = map(fit, glance)
-) %>%
-  select(-spec)
+system.time( { # 55 seconds
+  growth.models <- growth.models %>%
+    mutate(fit = map(wflow, fit, data = growth2),
+           glance = map(fit, glance)
+    ) 
 })
 
-growth.models %>% select(-f, -fit) %>% unnest(glance) %>% arrange(BIC)
+growth.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
 ```
 
 ```{r}
-growth.models %>% filter(name=="7_linear.parent.mf.block.slope.slope") %>%
+growth.models %>% filter(name=="m7_linear.parent.mf.block.slope.slope") %>%
   pull(fit) %>%
   magrittr::extract2(1) %>%
   tidy()
 ```
 
 ```{r}
-growth.models %>% filter(name=="9_linear_with_weeks_int.parent.all.slope") %>%
+growth.models %>% filter(name=="m9_linear_with_weeks_int.parent.all.slope") %>%
   pull(fit) %>%
   magrittr::extract2(1) %>%
   tidy()
@@ -137,27 +179,45 @@ growth.models.best <- growth.models %>%
 
 set.seed(1001)
 growth_folds <- vfold_cv(growth2, v = 10)
-growth_folds
+
+growth.models.best <- growth.models.best %>%
+  mutate(resamples = map(wflow, fit_resamples, resamples = growth_folds, control = control_resamples(save_pred = TRUE)))
+```
+```{r}
+growth.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "wide")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  select(-.config) %>%
+  arrange(rmse)
+  
 ```
 
-
-```{r, fig.asp=1}
-growth2 %>% 
-  cbind(predicted={growth.models %>% filter(name=="4_linear_with_weeks_pops_2way") %>% pull(predict) %>% unlist()}) %>%
-  ggplot(aes(x=height.cm.next, y = predicted)) +
-  geom_point(alpha=.2) +
-  geom_abline(color="skyblue2") +
-  facet_wrap(~parent.pop, scales="free")
+```{r}
+growth.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "long")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  arrange(.metric, mean) %>%
+  select(name, .metric, mean, std_err)
+  
 ```
 
-```{r, fig.asp=1}
-growth2 %>% 
-  cbind(predicted={growth.models %>% filter(name=="5_linear_with_weeks_pops_3way") %>% pull(predict) %>% unlist()}) %>%
-  ggplot(aes(x=height.cm.next, y = predicted)) +
-  geom_point(alpha=.2) +
-  geom_abline(color="skyblue2") +
-  facet_wrap(~parent.pop, scales="free")
+```{r}
+growth.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "long")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  arrange(.metric, mean) %>%
+  select(name, .metric, mean, std_err) %>%
+  ggplot(aes(x=name, y = mean, ymin=mean-std_err, ymax=mean+std_err, fill = name)) +
+  geom_col() +
+  geom_errorbar(width = 0.5) +
+  facet_wrap(~.metric, scales = "free_y") +
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+  ggtitle("10-fold cross validation")
 ```
+
 
 For plotting the prediction curve, it looks like I can't combine `geom_function` and `facet_wrap` so I will compute the prediction curves myself and then combine in the plots
 
@@ -169,13 +229,13 @@ growth_curves <- growth2 %>%
   
   # generate a "newdata" data frame for each parent.pop
   mutate(newdata = pmap(list(parent.pop, minSize, maxSize), \(p, x, y) tibble(parent.pop = p,
-                                                        elapsed_weeks = 1,
-                                                        height.cm = seq(x, y, length.out = 101)))) %>%
-
- # predictions for each parent.pop
+                                                                              elapsed_weeks = 1,
+                                                                              height.cm = seq(x, y, length.out = 101)))) %>%
+  
+  # predictions for each parent.pop
   mutate(predict4 = map(newdata, \(nd) predict(growth.models$lm[[4]], newdata = nd)),
          predict5 = map(newdata, \(nd) predict(growth.models$lm[[5]], newdata = nd))) %>%
-
+  
   # unnest to plot
   unnest(cols = c(newdata, predict4, predict5), names_repair = "minimal") %>%
   
@@ -200,7 +260,7 @@ growth.model.final <- growth.models %>% filter(name == "4_linear_with_weeks_pops
 summary(growth.model.final)
 ```
 
- PROBABLY SHOULD USE LMER AND POP AS A RANDOM EFFECT INSTEAD OF THE LM
+PROBABLY SHOULD USE LMER AND POP AS A RANDOM EFFECT INSTEAD OF THE LM
 
 ## On to survival
 
@@ -235,7 +295,7 @@ survival.models <- tribble(
   "7_quadratic_size_pops",    "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2)", 
   "8_cubic_size_pops",        "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2) + I(height.cm.prev^3)"
 )
-     
+
 
 
 survival.models <- survival.models %>%
@@ -292,12 +352,12 @@ survival.models2 <- tribble(
   "4_linear_size_pops",       "surv ~ height.cm.prev*parent.pop",
   "4b_linear_size_pops_date",       "surv ~ height.cm.prev*parent.pop + height.cm.prev*survey_date_char + parent.pop*survey_date_char",
   "5_quadratic_size",         "surv ~ height.cm.prev + I(height.cm.prev^2)", 
-    "5b_quadratic_size_date",         "surv ~ height.cm.prev*survey_date_char + I(height.cm.prev^2)*survey_date_char", 
+  "5b_quadratic_size_date",         "surv ~ height.cm.prev*survey_date_char + I(height.cm.prev^2)*survey_date_char", 
   "6_cubic_size",             "surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)",
   "7_quadratic_size_pops",    "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2)", 
   "8_cubic_size_pops",        "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2) + I(height.cm.prev^3)"
 )
-     
+
 
 
 survival.models2 <- survival.models2 %>%
@@ -325,13 +385,13 @@ survival_curves <- survival2 %>%
   
   # generate a "newdata" data frame for each date
   mutate(newdata = pmap(list(survey_date_char, minSize, maxSize), \(d, x, y) tibble(survey_date_char = d,
-                                                        height.cm.prev = seq(x, y, length.out = 101)))) %>%
-
- # predictions for each date
+                                                                                    height.cm.prev = seq(x, y, length.out = 101)))) %>%
+  
+  # predictions for each date
   mutate(surv = map(newdata, \(nd) predict(survival.model.final, newdata = nd, type = "response"))) %>%
   
   select(-survey_date_char) %>%
-
+  
   # unnest to plot
   unnest(cols = c(newdata, surv), names_repair = "minimal") 
 
