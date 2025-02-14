@@ -116,6 +116,11 @@ growth.models <- tibble(wflow=list(
       add_model(lmer_spec,
                 formula = height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (height.cm|block) )},
   
+  # adding this after looking at m7...intercept and slope for mf have a correlation of -1.00, so remove slope from mf.
+  m7_simple.linear.parent.mf.block.slope.slope = { growth_wflow %>% 
+      add_model(lmer_spec,
+                formula = height.cm.next ~ height.cm + (height.cm|parent.pop) + (height.cm|block) + (1|parent.pop/mf) )},
+  
   m8_linear_with_weeks_int.parent = { growth_wflow %>% 
       add_model(lmer_spec,
                 formula = height.cm.next ~ height.cm*elapsed_weeks + (1|parent.pop/mf) + (1|block) )},
@@ -165,17 +170,24 @@ growth.models %>% filter(name=="m7_linear.parent.mf.block.slope.slope") %>%
 ```
 
 ```{r}
+growth.models %>% filter(name=="m7_simple.linear.parent.mf.block.slope.slope") %>%
+  pull(fit) %>%
+  magrittr::extract2(1) %>%
+  tidy()
+```
+
+```{r}
 growth.models %>% filter(name=="m9_linear_with_weeks_int.parent.all.slope") %>%
   pull(fit) %>%
   magrittr::extract2(1) %>%
   tidy()
 ```
 
-Concentrate on the three best models and do some cross-validation to better assess predictive power
+Concentrate on the five best models and do some cross-validation to better assess predictive power
 ```{r}
 growth.models.best <- growth.models %>%
   unnest(glance) %>%
-  slice_min(AIC, n=3) 
+  slice_min(AIC, n=5) 
 
 set.seed(1001)
 growth_folds <- vfold_cv(growth2, v = 10)
@@ -183,6 +195,7 @@ growth_folds <- vfold_cv(growth2, v = 10)
 growth.models.best <- growth.models.best %>%
   mutate(resamples = map(wflow, fit_resamples, resamples = growth_folds, control = control_resamples(save_pred = TRUE)))
 ```
+
 ```{r}
 growth.models.best %>% 
   mutate(metrics = map(resamples, collect_metrics, type = "wide")) %>%
@@ -190,7 +203,7 @@ growth.models.best %>%
   unnest(metrics) %>%
   select(-.config) %>%
   arrange(rmse)
-  
+
 ```
 
 ```{r}
@@ -200,7 +213,7 @@ growth.models.best %>%
   unnest(metrics) %>%
   arrange(.metric, mean) %>%
   select(name, .metric, mean, std_err)
-  
+
 ```
 
 ```{r}
@@ -215,14 +228,21 @@ growth.models.best %>%
   geom_errorbar(width = 0.5) +
   facet_wrap(~.metric, scales = "free_y") +
   theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
-  ggtitle("10-fold cross validation")
+  ggtitle("10-fold cross validation") +
+  scale_fill_viridis_d()
 ```
 
+So, we go with simplified m7 (or possibly m9 if we decide we need weeks).
+```{r}
+growth.model.final <- growth.models.best %>% filter(name == "m7_simple.linear.parent.mf.block.slope.slope") %>% pull(fit) %>% magrittr::extract2(1)
+
+growth.model.final
+```
 
 For plotting the prediction curve, it looks like I can't combine `geom_function` and `facet_wrap` so I will compute the prediction curves myself and then combine in the plots
 
 ```{r}
-growth_curves <- growth2 %>%
+newdata.growth <- growth2 %>%
   group_by(parent.pop) %>%
   summarize(minSize = min(height.cm, na.rm = TRUE),
             maxSize = max(height.cm, na.rm = TRUE)) %>%
@@ -231,36 +251,24 @@ growth_curves <- growth2 %>%
   mutate(newdata = pmap(list(parent.pop, minSize, maxSize), \(p, x, y) tibble(parent.pop = p,
                                                                               elapsed_weeks = 1,
                                                                               height.cm = seq(x, y, length.out = 101)))) %>%
-  
-  # predictions for each parent.pop
-  mutate(predict4 = map(newdata, \(nd) predict(growth.models$lm[[4]], newdata = nd)),
-         predict5 = map(newdata, \(nd) predict(growth.models$lm[[5]], newdata = nd))) %>%
-  
-  # unnest to plot
-  unnest(cols = c(newdata, predict4, predict5), names_repair = "minimal") %>%
-  
-  # pivoting for easier plotting
-  pivot_longer(cols = c(predict4, predict5), names_to = "model", values_to = "height.cm.next")
+  select(newdata) %>%
+  unnest(newdata)
 
-growth_curves
+growth.predictions <- extract_fit_engine(growth.model.final) %>%
+  predict(newdata.growth, re.form = ~ (height.cm | parent.pop)) %>%
+  cbind(newdata.growth, height.cm.next=.)
 ```
 
+Plot it.  Points are actual data (height.next vs height).  The line is the model prediction.
 ```{r, fig.asp=1}
 growth2 %>%
   ggplot(aes(x=height.cm, y = height.cm.next)) +
-  geom_point() +
-  geom_line(aes(color = model), data = growth_curves) +
+  geom_point(alpha=.25) +
+  geom_line(data = growth.predictions, color = "blue") +
   facet_wrap(~parent.pop, scales = "free")
 ```
 
-As expected, the models are quite similar.  Let's go with the simpler one.
 
-```{r}
-growth.model.final <- growth.models %>% filter(name == "4_linear_with_weeks_pops_2way") %>% pull(lm) %>% magrittr::extract2(1)
-summary(growth.model.final)
-```
-
-PROBABLY SHOULD USE LMER AND POP AS A RANDOM EFFECT INSTEAD OF THE LM
 
 ## On to survival
 
