@@ -18,6 +18,8 @@ library(multilevelmod)
 library(lmerTest)
 library(broom.mixed)
 library(doMC)
+library(furrr)
+library(modelr)
 registerDoMC(cores = 7)
 conflicted::conflict_prefer("select", "dplyr")
 conflicted::conflict_prefer("filter", "dplyr")
@@ -80,69 +82,71 @@ maxSize <- max(growth2$height.cm, na.rm = TRUE)
 
 
 In order to be able to use the tidymodel tools on mixed effect models, it works best to add variables and formulas in the following way.  This is a bit cumbersome, but it will help later.
+
+CURRENTLY NONE OF THE GROWTH MODELS ARE TESTING TIME AS A FACTOR (SURV_DATE_CHAR).  IT COULD BE WORTH GOING BACK AND TESTING THAT.
 ```{r}
-lmer_spec <- linear_reg() %>%
+lmer.spec <- linear_reg() %>%
   set_engine("lmer")
 
-growth_wflow <- workflow() %>%
+growth.wflow <- workflow() %>%
   add_variables(outcomes = height.cm.next, predictors = c(height.cm, elapsed_weeks, parent.pop, mf, block)) 
 
 growth.models <- tibble(wflow=list(
-  m1_block = {growth_wflow %>%
-      add_model(lmer_spec,
+  m1_block = {growth.wflow %>%
+      add_model(lmer.spec,
                 formula = height.cm.next ~ (1|block)) },
   
-  m2_parent = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m2_parent = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ (1|parent.pop) )},
   
-  m3_block.parent = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m3_block.parent = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ (1|parent.pop) + (1|block) )},
   
-  m4_block.parent.mf = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m4_block.parent.mf = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ (1|parent.pop/mf) + (1|block) )},
   
-  m5_linear.parent.mf.block = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m5_linear.parent.mf.block = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm + (1|parent.pop/mf) + (1|block) )},
   
-  m6_linear.parent.mf.block.slope = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m6_linear.parent.mf.block.slope = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (1|block) )},
   
-  m7_linear.parent.mf.block.slope.slope = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m7_linear.parent.mf.block.slope.slope = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm + (height.cm|parent.pop/mf) + (height.cm|block) )},
   
   # adding this after looking at m7...intercept and slope for mf have a correlation of -1.00, so remove slope from mf.
-  m7_simple.linear.parent.mf.block.slope.slope = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m7_simple.linear.parent.mf.block.slope.slope = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm + (height.cm|parent.pop) + (height.cm|block) + (1|parent.pop/mf) )},
   
-  m8_linear_with_weeks_int.parent = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m8_linear_with_weeks_int.parent = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm*elapsed_weeks + (1|parent.pop/mf) + (1|block) )},
   
-  m9_linear_with_weeks_int.parent.all.slope = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m9_linear_with_weeks_int.parent.all.slope = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm*elapsed_weeks + (height.cm + elapsed_weeks|parent.pop/mf) + (height.cm + elapsed_weeks|block) )},
   
-  m10_quadratic.parent.mf.block = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m10_quadratic.parent.mf.block = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm + I(height.cm^2) + (1|parent.pop/mf) + (1|block) )},
   
-  m11_cubic.parent.mf.block = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m11_cubic.parent.mf.block = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm + I(height.cm^2) + I(height.cm^3) + (1|parent.pop/mf) + (1|block) )},
   
-  m12_quadratic_weeks.parent.height.slope = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m12_quadratic_weeks.parent.height.slope = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + (height.cm + I(height.cm^2) | parent.pop / mf) + (height.cm + I(height.cm^2) | block) )}, 
   
-  m13_cubic_weeks.parent.height.slope = { growth_wflow %>% 
-      add_model(lmer_spec,
+  m13_cubic_weeks.parent.height.slope = { growth.wflow %>% 
+      add_model(lmer.spec,
                 formula = height.cm.next ~ height.cm*elapsed_weeks*parent.pop + I(height.cm^2) + I(height.cm^3) + (height.cm + I(height.cm^2) | parent.pop) + (height.cm + I(height.cm^2) | block) )}
 ),
 name = names(wflow)
@@ -277,9 +281,12 @@ Since we want to predict survival as a function of size, we need to combine the 
 ```{r}
 survival2 <- survival %>% select(Genotype, death.date) %>%
   right_join(growth) %>%
-  mutate(death.date = lubridate::mdy(death.date),
+  mutate(ppmf = str_c(parent.pop, "_", mf), # allows me to specify RE for pp and mf separately.
+         death.date = lubridate::mdy(death.date),
          surv = ifelse(is.na(death.date), 1, death.date > survey_date),
-         survey_date_char = as.character(survey_date)) %>%
+         survey_date_char = as.character(survey_date),
+         elapsed_days= lead(survey_date) - survey_date,
+         elapsed_weeks = as.integer(elapsed_days)/7,) %>%
   
   # because we don't have height measurement on the day death is observed we need a new column, height previous
   arrange(Genotype, survey_date) %>% 
@@ -292,124 +299,259 @@ survival2 %>% select(Genotype, death.date, survey_date, surv, height.cm, height.
 ```
 
 ```{r}
-survival.models <- tribble(
-  ~name,          ~f,
-  "1_intercept",              "surv ~ 1", 
-  "2_linear_size",            "surv ~ height.cm.prev", 
-  "3_linear_pops",            "surv ~ parent.pop",
-  "4_linear_size_pops",       "surv ~ height.cm.prev*parent.pop",
-  "5_quadratic_size",         "surv ~ height.cm.prev + I(height.cm.prev^2)", 
-  "6_cubic_size",             "surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)",
-  "7_quadratic_size_pops",    "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2)", 
-  "8_cubic_size_pops",        "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2) + I(height.cm.prev^3)"
+surv.spec <- linear_reg() %>%
+  set_engine("glmer", family = "binomial")
+
+surv.wflow <- workflow() %>%
+  add_variables(outcomes = surv, predictors = c(height.cm.prev, survey_date_char, elapsed_weeks, parent.pop, mf, ppmf, block)) 
+
+surv.models <- tibble(wflow=list(
+  m1_RE = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ (1|parent.pop/mf) + (1|block)) },
+  
+  m1b_RE2 = {surv.wflow %>% # reality check; this should be the same as M1
+      add_model(surv.spec,
+                formula = surv ~ (1|parent.pop) + (1|ppmf) + (1|block)) },
+  
+  m2_linear = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + (1|parent.pop/mf) + (1|block)) },
+  
+  m2d_linear.date = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + survey_date_char + (1|parent.pop/mf) + (1|block)) },
+  
+  m2e_linear.weeks = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + elapsed_weeks + (1|parent.pop/mf) + (1|block)) },
+  
+  m3_linear.slope.parent.pop = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + (height.cm.prev|parent.pop) + (1|ppmf) + (1|block)) },
+  
+  m5_linear.slope.parent.pop.mf = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + (height.cm.prev|parent.pop/mf) + (1|block)) },
+  
+  m6_linear.slope.parent.pop.mf.block = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + (height.cm.prev|parent.pop/mf) + (height.cm.prev|block)) },
+  
+  #Too Slow when including date as a slope for RE, so remove that
+  # Still does not converge
+  # m6d_linear.date.slope.parent.pop.mf.block = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + survey_date_char + (height.cm.prev|parent.pop/mf) + (height.cm.prev|block)) },
+  # 
+  # m6e_linear.weeks.slope.parent.pop.mf.block = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + elapsed_weeks + (elapsed_weeks + height.cm.prev|parent.pop/mf) + (height.cm.prev|block)) },
+  
+  # Does not converge
+  #   m7_quad = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + I(height.cm.prev^2) + (1|parent.pop/mf) + (1|block)) },
+  # 
+  # m7d_quad.date = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + survey_date_char + I(height.cm.prev^2) + (1|parent.pop/mf) + (1|block)) },
+  # 
+  # m7e_quad.weeks = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + elapsed_weeks + I(height.cm.prev^2) + (1|parent.pop/mf) + (1|block)) },
+  
+  m8_quad.slope.parent.pop = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + I(height.cm.prev^2) + (height.cm.prev + I(height.cm.prev^2)|parent.pop) + (1|ppmf) + (1|block)) },
+  
+  # Fails to converge
+  # m9_quad.slope.parent.pop.mf = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + I(height.cm.prev^2) + (height.cm.prev + I(height.cm.prev^2)|parent.pop/mf) + (1|block)) },
+  
+  m10_quad.slope.parent.pop.mf.blck = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + I(height.cm.prev^2) + (height.cm.prev + I(height.cm.prev^2)|parent.pop/mf) + (height.cm.prev + I(height.cm.prev^2)|block)) },
+  
+  # Keep date out of RE so it will fit
+  # Still fails to converge
+  # m10d_quad.date.slope.parent.pop.mf.blck = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + survey_date_char + I(height.cm.prev^2) + (height.cm.prev + I(height.cm.prev^2)|parent.pop/mf) + (height.cm.prev + I(height.cm.prev^2)|block)) },
+  # 
+  # m10e_quad.weeks.slope.parent.pop.mf.blck = {surv.wflow %>%
+  #     add_model(surv.spec,
+  #               formula = surv ~ height.cm.prev + elapsed_weeks + I(height.cm.prev^2) + (height.cm.prev + I(height.cm.prev^2) + elapsed_weeks|parent.pop/mf) + (height.cm.prev + I(height.cm.prev^2) + elapsed_weeks|block)) },
+  # 
+  
+  m11_cubic = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3) + (1|parent.pop/mf) + (1|block)) },
+  
+  m11d_cubic.date = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + survey_date_char + I(height.cm.prev^2) + I(height.cm.prev^3) + (1|parent.pop/mf) + (1|block)) },
+  
+  m11e_cubic.weeks = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + elapsed_weeks + I(height.cm.prev^2) + I(height.cm.prev^3) + (1|parent.pop/mf) + (1|block)) },
+  
+  m12_cubic.slope.parent.pop = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)|parent.pop) + (1|ppmf) + (1|block)) },
+  
+  m13_cubic.slope.parent.pop.mf = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)|parent.pop/mf) + (1|block)) },
+  
+  m14_cubic.slope.parent.pop.mf.blck = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)|parent.pop/mf) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)|block)) },
+  
+  # keep date out of RE
+  m14d_cubic.date.slope.parent.pop.mf.blck = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + survey_date_char + I(height.cm.prev^2) + I(height.cm.prev^3) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)|parent.pop/mf) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)|block)) },
+  
+  m14e_cubic.weeks.slope.parent.pop.mf.blck = {surv.wflow %>%
+      add_model(surv.spec,
+                formula = surv ~ height.cm.prev + elapsed_weeks + I(height.cm.prev^2) + I(height.cm.prev^3) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3) + elapsed_weeks|parent.pop/mf) + (height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3) + elapsed_weeks|block)) }
+),
+name = names(wflow)
 )
 
-
-
-survival.models <- survival.models %>%
-  mutate(glm = map(f, ~ glm(as.formula(.), data = survival2, family = "binomial") ),
-         predict = map(glm, predict, type = "response"), # predicting from original data...
-         glance = map(glm, glance))
-
-survival.models %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC)
 ```
 
-The cubic size model seems like the best option
+Fit the models
 
 ```{r}
-survival.model.final <- survival.models %>% filter(name == "6_cubic_size") %>% pull(glm) %>% magrittr::extract2(1)
-summary(survival.model.final)
+#plan(multisession, workers = 7)
+system.time( { # 3386.480  seconds (Vs 2540 if done with future_map)
+  surv.models <- surv.models %>%
+    #    mutate(fit = future_map(wflow, fit, data = survival2, .progress = TRUE, .options = furrr_options(packages = c("workflows", "multilevelmod"))),
+    mutate(fit = map(wflow, fit, data = survival2, .progress = TRUE),
+           glance = map(fit, glance)
+    ) 
+})
+
+surv.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
+#plan(sequential)
 ```
-Since we have the same model for all pops, plotting should be easier than for the growth model
 ```{r}
-plot_surv <- function(x, m=survival.model.final) {
-  predict(m, newdata = tibble(height.cm.prev = x), type = "response")
+save.image(file="../output/WL2_2023_growth_survival_models.Rdata")
+```
+
+Take a look at some of the best models...
+
+Concentrate on the five best models and do some cross-validation to better assess predictive power
+```{r}
+surv.models.best <- surv.models %>%
+  unnest(glance) %>%
+  slice_min(BIC, n=5)
+```
+
+```{r}
+surv.models.best %>%
+  pull(fit) %>%
+  walk(print(.))
+
+```
+
+
+
+```{r}
+set.seed(1001)
+surv_folds <- vfold_cv(survival2, v = 10)
+
+system.time( { #100 seconds
+  surv.models.best <- surv.models.best %>%
+    mutate(resamples = map(wflow, fit_resamples, resamples = surv_folds, control = control_resamples(save_pred = TRUE)))
+})
+```
+
+```{r}
+surv.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "wide")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  select(-.config) %>%
+  arrange(rmse)
+
+```
+
+```{r}
+surv.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "long")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  arrange(.metric, mean) %>%
+  select(name, .metric, mean, std_err)
+
+```
+
+```{r}
+surv.models.best %>% 
+  mutate(metrics = map(resamples, collect_metrics, type = "long")) %>%
+  select(name, metrics) %>%
+  unnest(metrics) %>%
+  arrange(.metric, mean) %>%
+  select(name, .metric, mean, std_err) %>%
+  ggplot(aes(x=name, y = mean, ymin=mean-std_err, ymax=mean+std_err, fill = name)) +
+  geom_col() +
+  geom_errorbar(width = 0.5) +
+  facet_wrap(~.metric, scales = "free_y") +
+  theme(axis.text.x = element_blank(), axis.title.x = element_blank()) +
+  ggtitle("10-fold cross validation") +
+  scale_fill_viridis_d()
+```
+
+So, we go with either m2d or m11d.  Given the overlapping error bars I lean towards the simpler one, but maybe plot them both first.
+
+```{r}
+surv.models.best2 <- surv.models.best %>% slice_min(AIC, n = 2)
+```
+
+For plotting the prediction curve, it looks like I can't combine `geom_function` and `facet_wrap` so I will compute the prediction curves myself and then combine in the plots
+
+```{r}
+survival2 %>% ungroup() %>% select(parent.pop, survey_date_char) %>% table()
+newdata %>% ungroup() %>% select(parent.pop, survey_date_char) %>% table()
+
+```
+
+
+```{r}
+surv.predict.func <- function(m, newdata=newdata.survival) {
+  extract_fit_engine(m) %>%
+  predict(newdata, type = "response", re.form = ~ (1 | parent.pop)) %>%
+  cbind(newdata, surv=.)
 }
 
-survival2 %>%
-  ggplot(aes(x=height.cm.prev, y = surv)) +
-  geom_point(alpha=.1) + 
-  geom_function(fun = plot_surv, color = "red") + 
-  facet_wrap(~ parent.pop)
+newdata.survival <- survival2 %>%
+  group_by(parent.pop, survey_date_char) %>%
+  reframe(height.cm.prev = seq(min(height.cm.prev, na.rm = TRUE),
+                               max(height.cm.prev, na.rm = TRUE),
+                               length.out = 101)) %>%
+  filter(parent.pop != "WV", survey_date_char != "2023-07-03")
+
+surv.predictions <- surv.models.best2 %>%
+  mutate(predict = map(fit, surv.predict.func)) %>%
+  select(name, predict) %>%
+  unnest(predict)
+
+surv.predictions %>%
+  ungroup() %>%
+  nest(.by = parent.pop) %>% 
+  mutate(plot = map2(data, parent.pop, \(x, pp) {
+  ggplot(x, aes(x=height.cm.prev, y = surv)) +
+      geom_line(aes(color=name)) +
+      facet_wrap(~survey_date_char) +
+      geom_point(alpha = 0.3, data = {survival2 %>% filter(parent.pop==pp)}) + 
+      geom_smooth(alpha = 0.3, se = FALSE, data = {survival2 %>% filter(parent.pop==pp)}) + 
+      ggtitle(pp)
+  })) %>%
+  pull(plot)
 ```
 
-Or, plotting it all together
-
-```{r}
-survival2 %>%
-  ggplot(aes(x=height.cm.prev, y = surv)) +
-  geom_point(aes(color = parent.pop), alpha=.1) + 
-  geom_function(fun = plot_surv, color = "red") +
-  geom_smooth()
-```
-
-
-But...I don't think this is correct.  We have repeated measures on the same plants over different dates and that is not being considered.
-
-
-Try again, including observation date in the model.
-
-```{r}
-survival.models2 <- tribble(
-  ~name,          ~f,
-  "1_intercept",              "surv ~ 1", 
-  "2_linear_size",            "surv ~ height.cm.prev", 
-  "2b_linear_size_date",            "surv ~ height.cm.prev*survey_date_char", 
-  "3_linear_pops",            "surv ~ parent.pop",
-  "3b_linear_pops_date",            "surv ~ parent.pop*survey_date_char",
-  "4_linear_size_pops",       "surv ~ height.cm.prev*parent.pop",
-  "4b_linear_size_pops_date",       "surv ~ height.cm.prev*parent.pop + height.cm.prev*survey_date_char + parent.pop*survey_date_char",
-  "5_quadratic_size",         "surv ~ height.cm.prev + I(height.cm.prev^2)", 
-  "5b_quadratic_size_date",         "surv ~ height.cm.prev*survey_date_char + I(height.cm.prev^2)*survey_date_char", 
-  "6_cubic_size",             "surv ~ height.cm.prev + I(height.cm.prev^2) + I(height.cm.prev^3)",
-  "7_quadratic_size_pops",    "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2)", 
-  "8_cubic_size_pops",        "surv ~ height.cm.prev*parent.pop + I(height.cm.prev^2) + I(height.cm.prev^3)"
-)
-
-
-
-survival.models2 <- survival.models2 %>%
-  mutate(glm = map(f, ~ glm(as.formula(.), data = survival2, family = "binomial") ),
-         predict = map(glm, predict, type = "response"), # predicting from original data...
-         glance = map(glm, glance))
-
-survival.models2 %>% select(-f, -glm) %>% unnest(glance) %>% arrange(BIC)
-```
-
-The linear model 2b seems like the best option
-
-```{r}
-survival.model.final2 <- survival.models2 %>% filter(name == "2b_linear_size_date") %>% pull(glm) %>% magrittr::extract2(1)
-summary(survival.model.final2)
-```
-
-Now we need a curve for each date
-
-```{r}
-survival_curves <- survival2 %>%
-  group_by(survey_date_char) %>%
-  summarize(minSize = min(height.cm, na.rm = TRUE),
-            maxSize = max(height.cm, na.rm = TRUE)) %>%
-  
-  # generate a "newdata" data frame for each date
-  mutate(newdata = pmap(list(survey_date_char, minSize, maxSize), \(d, x, y) tibble(survey_date_char = d,
-                                                                                    height.cm.prev = seq(x, y, length.out = 101)))) %>%
-  
-  # predictions for each date
-  mutate(surv = map(newdata, \(nd) predict(survival.model.final, newdata = nd, type = "response"))) %>%
-  
-  select(-survey_date_char) %>%
-  
-  # unnest to plot
-  unnest(cols = c(newdata, surv), names_repair = "minimal") 
-
-survival_curves
-```
-
-```{r, fig.asp=1}
-survival2 %>%
-  ggplot(aes(x=height.cm.prev, y = surv)) +
-  geom_point() +
-  geom_line(color = "red", data = survival_curves) +
-  facet_wrap(~survey_date_char, scales = "free_x")
-```
+The cubic or linear size models both seem like reasonable options.
