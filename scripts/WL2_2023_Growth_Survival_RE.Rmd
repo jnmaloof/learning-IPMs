@@ -86,7 +86,7 @@ In order to be able to use the tidymodel tools on mixed effect models, it works 
 
 CURRENTLY NONE OF THE GROWTH MODELS ARE TESTING TIME AS A FACTOR (week_char).  IT COULD BE WORTH GOING BACK AND TESTING THAT.
 
-elapsed weeks is probably important, it is the time between survey dates, so if it has been 2 weeks intead of 1, we expect more groth
+elapsed weeks is probably important, it is the time between survey dates, so if it has been 2 weeks intead of 1, we expect more growth
 ```{r}
 lmer.spec <- linear_reg() %>%
   set_engine("lmer")
@@ -272,10 +272,11 @@ growth2 %>%
   ggplot(aes(x=height.cm, y = height.cm.next)) +
   geom_point(alpha=.25) +
   geom_line(data = growth.predictions, color = "blue") +
+  #geom_smooth(color = "red") +
   facet_wrap(~parent.pop, scales = "free")
 ```
 
-
+It looks to me like this tends to under-estimate the growth_next for some pops.  
 
 ## On to survival
 
@@ -574,7 +575,7 @@ surv.models.best %>%
 
 
 ```{r}
-surv.models.best <- surv.models.best %>% slice_min(BIC, n = 1)
+surv.model.final <- surv.models.best %>% slice_min(BIC, n = 1)
 ```
 
 For plotting the prediction curve, it looks like I can't combine `geom_function` and `facet_wrap` so I will compute the prediction curves myself and then combine in the plots
@@ -594,7 +595,7 @@ newdata.survival <- survival2 %>%
           elapsed_weeks = 1) %>%
   filter(parent.pop != "WV")
 
-surv.predictions <- surv.models.best %>%
+surv.predictions <- surv.model.final %>%
   mutate(predict = map(fit, surv.predict.func)) %>%
   select(name, predict) %>%
   unnest(predict)
