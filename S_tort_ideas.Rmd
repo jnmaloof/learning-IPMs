@@ -1,0 +1,73 @@
+---
+title: "S_tort_ideas"
+author: "Julin Maloof"
+date: "January 16, 2025"
+output: html_document
+---
+
+## Planning _S. tortuosus_ IPMs
+
+Sketching out some initial ideas for what is needed
+
+All of these would include pop (or gt) as a covariate
+
+1. Germination rate
+
+2. Initial survival?
+Not sure if we really need this
+
+3. Survival and Growth
+As a function of size (and time?) and physiology
+Can also include environment
+
+4. Probability of flowering
+As a function of size, time
+
+5. Number of fruit
+As a function of size, time
+
+6. Seed per fruit
+
+7. Seedbank?
+
+8. Bienniality?
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+Size from current size + genomics score + physiolgy.
+
+other predictors: home environment, distance from home environment, density
+
+gregor sigmund (sp) models for list stage transitions Clarkia.  Not demography but can be incorporated https://www.journals.uchicago.edu/doi/10.1086/726785#fg2
+
+Tom E. X. Miller has Bayesian models.
+
+Correlations across traits and time
+
+probably of flowering, budding, and fruiting.  Do we need to break this down? in this way?
+
+seed per fruit?  as a constant.  Sarah has data for multiple field sites.
+
+probability of surviving to second year and reproduction (bienniality)
+
+seed bank (probability of going into seed bank; probability of survival in seedbank; probability of germinating out of seed bank).
+
+See Jen Williams life cycle for good model.
+
+recruit success
+
+
+
+
