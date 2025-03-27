@@ -80,11 +80,11 @@ temp_summary <- temp %>%
     mean_temp_d = mean(SoilTemp)
   ) %>%
   mutate(
-    across(ends_with("temp_d"), \(x) rollmean(x, k = 7, align = "right", fill = NA), .names="{.col}1_7"),
-    across(ends_with("temp_d"), \(x) rollmean(x, k = 13, align = "right", fill = NA), .names="{.col}1_13"), # 13 so I can get the first survey date
-    across(ends_with("1_7"), \(x) dplyr::lag(x, 6), .names = "{.col}_13") 
+    across(ends_with("temp_d"), \(x) rollmean(x, k = 7, align = "left", fill = NA), .names="{.col}1_7"),
+    across(ends_with("temp_d"), \(x) rollmean(x, k = 14, align = "center", fill = NA), .names="{.col}1_14"), 
+    across(ends_with("1_7"), \(x) dplyr::lag(x, 7), .names = "{.col}_14") 
   ) %>%
-  rename_with(\(x) str_replace(x, "1_7_13", "6_13"))
+  rename_with(\(x) str_replace(x, "1_7_14", "7_14"))
 
 temp_summary
 ```
@@ -115,8 +115,8 @@ moisture_summary <- moisture %>%
     mean_moisture_d = mean(s_moisture)
   ) %>%
   mutate(
-    s_moisture_1_7 = rollmean(mean_moisture_d, k = 7, align = "right", fill = "extend"),
-    s_moisture_1_14 = rollmean(mean_moisture_d, k = 14, align = "right", fill = "extend"),
+    s_moisture_1_7 = rollmean(mean_moisture_d, k = 7, align = "left", fill = "extend"),
+    s_moisture_1_14 = rollmean(mean_moisture_d, k = 14, align = "center", fill = "extend"),
     s_moisture_7_14 = dplyr::lag(s_moisture_1_7, 7)
   )
 
@@ -221,11 +221,11 @@ growth.models <- tibble(wflow=list(
   
   m3_min_temp6_13 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
-                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + min_temp_d6_13  + (1|parent.pop) + (1|block) )},
+                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + min_temp_d7_14  + (1|parent.pop) + (1|block) )},
   
   m4_min_temp1_13 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
-                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + min_temp_d1_13 + (1|parent.pop) + (1|block) )},
+                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + min_temp_d1_14 + (1|parent.pop) + (1|block) )},
   
   m5_max_temp1_7 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
@@ -237,16 +237,16 @@ growth.models <- tibble(wflow=list(
   
   m6_max_temp6_13 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
-                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + max_temp_d6_13 + (1|parent.pop) + (1|block) )},
+                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + max_temp_d7_14 + (1|parent.pop) + (1|block) )},
   
   m7_max_temp1_13 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
-                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 +  max_temp_d1_13 + (1|parent.pop) + (1|block) )},
+                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 +  max_temp_d1_14 + (1|parent.pop) + (1|block) )},
   
   # convergence issue on cross-validation
   # m7re_max_temp1_13_reslope = { growth.wflow.poly %>% 
   #     add_model(lmer.spec,
-  #               formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 +  max_temp_d1_13 + (max_temp_d1_13|parent.pop) + (1|block) )},
+  #               formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 +  max_temp_d1_14 + (max_temp_d1_14|parent.pop) + (1|block) )},
   
   m8_mean_temp1_7 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
@@ -254,11 +254,11 @@ growth.models <- tibble(wflow=list(
   
   m9_mean_temp6_13 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
-                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + mean_temp_d6_13 + (1|parent.pop) + (1|block) )},
+                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + mean_temp_d7_14 + (1|parent.pop) + (1|block) )},
   
   m10_mean_temp1_13 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
-                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + mean_temp_d1_13 + (1|parent.pop) + (1|block) )},
+                formula = height.cm.next ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + mean_temp_d1_14 + (1|parent.pop) + (1|block) )},
   
   m11_mois1_7 = { growth.wflow.poly %>% 
       add_model(lmer.spec,
@@ -326,8 +326,7 @@ growth.models.best %>%
 
 ```
 
-Doesn't help predictions :-(
-
+moisture help a bit.
 
 ```{r}
 growth.models.best %>% 
@@ -355,9 +354,9 @@ growth.models.best %>%
   scale_fill_viridis_d()
 ```
 
-So, might as well stick with the base model
+include moisture in the model
 ```{r}
-growth.model.final <- growth.models.best %>% filter(name == "m1_cubic.parent.block") %>% pull(fit) %>% magrittr::extract2(1)
+growth.model.final <- growth.models.best %>% filter(name == "m12re_mois7_14.reslope") %>% pull(fit) %>% magrittr::extract2(1)
 
 growth.model.final
 ```
@@ -405,6 +404,7 @@ Since we want to predict survival as a function of size, we need to combine the 
 ```{r}
 survival2 <- survival %>% select(Genotype, death.date) %>%
   right_join(growth) %>%
+  mutate(l.height.cm = log(height.cm)) %>%
   arrange(Genotype, survey_date) %>%
   select(-survey.notes, -long.leaf.cm) %>%
   group_by(Genotype) %>%
@@ -417,10 +417,10 @@ survival2 <- survival %>% select(Genotype, death.date) %>%
   mutate(week = as.numeric(survey_date - ymd("2023-07-03")) / 7, # 7/03 = pre-transplant survey date
          week_char = as.character(round(week, 2)),
          ppmf = str_c(parent.pop, "_", mf)) %>% # allows me to specify RE for pp and mf separately.
-  drop_na(surv.next, parent.pop, height.cm, elapsed_days)
+  drop_na(surv.next, parent.pop, l.height.cm, elapsed_days)
 
 # check it
-survival2 %>% select(Genotype, death.date, survey_date, surv.next, height.cm)
+survival2 %>% select(Genotype, death.date, survey_date, surv.next, l.height.cm)
 ```
 
 
@@ -439,13 +439,13 @@ surv.spec <- linear_reg() %>%
   set_engine("glmer", family = "binomial")
 
 surv.rec <- survival2 %>%
-  select(surv.next, height.cm, elapsed_weeks, week, parent.pop, block, contains("temp_d"), contains("s_moisture") ) %>%
+  select(surv.next, l.height.cm, elapsed_weeks, week, parent.pop, block, contains("temp_d"), contains("s_moisture") ) %>%
   recipe() %>%
   update_role(surv.next, new_role = "outcome") %>% 
-  update_role(c(height.cm, elapsed_weeks, week, parent.pop, block, contains("temp_d"), contains("s_moisture")), new_role = "predictor") 
+  update_role(c(l.height.cm, elapsed_weeks, week, parent.pop, block, contains("temp_d"), contains("s_moisture")), new_role = "predictor") 
 
 surv.rec.poly <- surv.rec %>% 
-  step_poly(height.cm, degree = 3, keep_original_cols = TRUE)  %>%
+  step_poly(l.height.cm, degree = 3, keep_original_cols = TRUE)  %>%
   step_poly(week, degree = 3, keep_original_cols = TRUE) %>%
   step_normalize(all_numeric_predictors()) %>%
   step_rename_at(contains("poly"), fn = \(x) str_replace(x, "_poly_", ".p"))
@@ -459,107 +459,107 @@ surv.models <- tibble(wflow=list(
   
   ml1_linear = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + (1|parent.pop) + (1|block)) },
   
   ml2_min_temp_1_7 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + min_temp_d1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + min_temp_d1_7 + (1|parent.pop) + (1|block)) },
   
   ml3_min_temp_1_13 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + min_temp_d1_13 +(1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + min_temp_d1_14 +(1|parent.pop) + (1|block)) },
   
   ml4_min_temp_6_13 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + min_temp_d6_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + min_temp_d7_14 + (1|parent.pop) + (1|block)) },
   
   ml5_mean_temp_1_7 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + mean_temp_d1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + mean_temp_d1_7 + (1|parent.pop) + (1|block)) },
   
   ml1_mean_temp_1_13 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + mean_temp_d1_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + mean_temp_d1_14 + (1|parent.pop) + (1|block)) },
   
   ml1_mean_temp_6_13 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + mean_temp_d6_13 +(1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + mean_temp_d7_14 +(1|parent.pop) + (1|block)) },
   
   ml1_max_temp_1_7 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + max_temp_d1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + max_temp_d1_7 + (1|parent.pop) + (1|block)) },
   
   ml1_max_temp_1_13 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + max_temp_d1_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + max_temp_d1_14 + (1|parent.pop) + (1|block)) },
   
   ml1_max_temp_6_13 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + max_temp_d6_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + max_temp_d7_14 + (1|parent.pop) + (1|block)) },
   
   ml1_s_moisture_1_7 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + s_moisture_1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + s_moisture_1_7 + (1|parent.pop) + (1|block)) },
   
   ml1_s_moisture_7_14 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + s_moisture_7_14 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + s_moisture_7_14 + (1|parent.pop) + (1|block)) },
   
   ml1_s_moisture_1_14 = {surv.wflow %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm + week + s_moisture_1_14 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm + week + s_moisture_1_14 + (1|parent.pop) + (1|block)) },
   
   mc1_cubic = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + (1|parent.pop) + (1|block)) },
   
   mc2_min_temp_1_7 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + min_temp_d1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + min_temp_d1_7 + (1|parent.pop) + (1|block)) },
   
   mc3_min_temp_1_13 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + min_temp_d1_13 +(1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + min_temp_d1_14 +(1|parent.pop) + (1|block)) },
   
   mc4_min_temp_6_13 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + min_temp_d6_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + min_temp_d7_14 + (1|parent.pop) + (1|block)) },
   
   mc5_mean_temp_1_7 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + mean_temp_d1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + mean_temp_d1_7 + (1|parent.pop) + (1|block)) },
   
   mc6_mean_temp_1_13 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + mean_temp_d1_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + mean_temp_d1_14 + (1|parent.pop) + (1|block)) },
   
   mc7_mean_temp_6_13 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + mean_temp_d6_13 +(1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + mean_temp_d7_14 +(1|parent.pop) + (1|block)) },
   
   mc8_max_temp_1_7 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + max_temp_d1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + max_temp_d1_7 + (1|parent.pop) + (1|block)) },
   
   mc9_max_temp_1_13 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + max_temp_d1_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + max_temp_d1_14 + (1|parent.pop) + (1|block)) },
   
   mc10_max_temp_6_13 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + max_temp_d6_13 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + max_temp_d7_14 + (1|parent.pop) + (1|block)) },
   
   mc11_moisture_1_7 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + s_moisture_1_7 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + s_moisture_1_7 + (1|parent.pop) + (1|block)) },
   
   mc12_moisture_7_14 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + s_moisture_7_14 + (1|parent.pop) + (1|block)) },
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + s_moisture_7_14 + (1|parent.pop) + (1|block)) },
   
   mc13_moisture_1_14 = {surv.wflow.poly %>%
       add_model(surv.spec,
-                formula = surv.next ~ height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + height.cm.p2 + height.cm.p3 + s_moisture_1_14 + (1|parent.pop) + (1|block)) }
+                formula = surv.next ~ l.height.cm.p1 + elapsed_weeks + week.p1 + week.p2 + week.p3 + l.height.cm.p2 + l.height.cm.p3 + s_moisture_1_14 + (1|parent.pop) + (1|block)) }
   
 ),
 name = names(wflow)
@@ -582,7 +582,6 @@ system.time( { # 110 seconds if using multisession;
 surv.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
 plan(sequential)
 ```
-No joy
 
 ```{r}
 surv.models <- surv.models %>% mutate(messages = map(fit, \(x) {x <- extract_fit_engine(x)
@@ -592,11 +591,12 @@ c(x@optinfo$message, unlist(x@optinfo$warnings), unlist(x@optinfo$conv$lme4$mess
 
 surv.models %>% select(name, messages) %>% unnest(messages) %>% filter(str_detect(messages, "Model"))
 ```
+convergence failures...
 
 
 Take a look at some of the best models...
 
-Concentrate on the three best models
+Concentrate on the five best models
 ```{r}
 surv.models.best <- surv.models %>%
   unnest(glance) %>%
@@ -630,7 +630,7 @@ surv.models.best %>%
   select(-.config) %>%
   arrange(desc(rsq))
 ```
-cubic for both weeks and size is the best
+cubic with mean or max temp in the past 7 days is best
 
 ```{r}
 surv.models.best %>% 
@@ -658,17 +658,17 @@ surv.models.best %>%
   scale_fill_viridis_d()
 ```
 
-```{r}
+```{r, eval=FALSE}
 surv.model.final <- surv.models.best %>% slice_min(BIC) %>% pull(fit) %>% magrittr::extract2(1)
 ```
 
 For plotting the prediction curve, it looks like I can't combine `geom_function` and `facet_wrap` so I will compute the prediction curves myself and then combine in the plots.
 
-```{r}
+```{r, eval = FALSE}
 newdata.survival <- survival2 %>%
   group_by(parent.pop, week) %>%
-  reframe(height.cm = seq(min(height.cm, na.rm = TRUE),
-                          max(height.cm, na.rm = TRUE),
+  reframe(l.height.cm = seq(min(l.height.cm, na.rm = TRUE),
+                          max(l.height.cm, na.rm = TRUE),
                           length.out = 101),
           elapsed_weeks = 1) %>%
   filter(parent.pop != "WV")
@@ -682,7 +682,7 @@ surv.predictions %>%
   ungroup() %>%
   nest(.by = parent.pop) %>% 
   mutate(plot = map2(data, parent.pop, \(x, pp) {
-    ggplot(x, aes(x=height.cm, y = surv.next)) +
+    ggplot(x, aes(x=l.height.cm, y = surv.next)) +
       geom_smooth(color = "grey50", lty=3, se = FALSE, method = "gam", data = {survival2 %>% filter(parent.pop==pp)}) + 
       geom_line() +
       facet_wrap(~week, scale = "free_x") +
@@ -693,7 +693,7 @@ surv.predictions %>%
   pull(plot) %>% walk(print)
 ```
 
-```{r}
+```{r, eval=FALSE}
 surv.model.final <- surv.model.final %>% extract_fit_engine()
 growth.model.final <- growth.model.final %>% extract_fit_engine()
 ```
