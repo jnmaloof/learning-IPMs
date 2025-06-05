@@ -13,6 +13,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Testing WL2 2023 growth and survival models that include climate
 
+TODO:
+DIURNAL RANGE FOR TEMPERATURE?
+LOG TRANSFORMATION FOR SURVIVAL
+
 ```{r}
 library(tidyverse)
 library(tidymodels)
