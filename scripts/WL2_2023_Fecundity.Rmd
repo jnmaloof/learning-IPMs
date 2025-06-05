@@ -24,7 +24,9 @@ conflicted::conflict_prefer("filter", "dplyr")
 conflicted::conflict_prefer("lag", "dplyr")
 ```
 
+## Load. data
 
+fruit production
 ```{r}
 fruit <- read_csv("../input/WL2_2023_Fruits_forIPMs.csv") %>%
   filter(BedLoc!="K_5_C") %>% #get rid of duplicate locations
@@ -33,17 +35,19 @@ fruit <- read_csv("../input/WL2_2023_Fruits_forIPMs.csv") %>%
 fruit
 ```
 
-
+pheno dates
 ```{r}
-pheno.dates <- read_csv("../input/WL2_2023_PhenologyDates.csv")
+pheno.dates <- read_csv("../input/WL2_2023_PhenologyDates.csv") %>%
+  mutate(Genotype = str_c(pop, mf, rep, sep = "_")) %>%
+  select(Genotype, everything())
 pheno.dates
 ```
 
+growth
 ```{r}
 growth <- read_csv("../input/WL2-2023_Size_Combined.csv")
 growth
 ```
-
 
 
 ```{r}
@@ -63,7 +67,7 @@ growth2 <- growth %>% arrange(Genotype, survey_date) %>%
 growth2 
 ```
 
-load survival
+survival
 ```{r}
 survival <- read_csv("../input/WL2_Mortality.csv")
 
@@ -85,7 +89,118 @@ survival2 <- survival %>% select(Genotype, death.date) %>%
   drop_na(surv.next, parent.pop, l.height.cm, elapsed_days)
 ```
 
-Here we are just going to predict fruit from size 2 months after transplant
+## probability of fruiting
+
+predict from size at 2 months
+
+merge relevant data and plot
+```{r}
+fruitornot <- pheno.dates %>% select(Genotype, fruit.date) %>%
+  left_join(growth2) %>%
+  filter(survey_date=="2023-09-06", parent.pop=="TM2") %>%
+  mutate(fruited = as.numeric(!is.na(fruit.date)))
+
+p1 <- fruitornot %>%
+  ggplot(aes(x=height.cm, y = fruited)) +
+  geom_point() +
+  geom_smooth(se = FALSE, method = "glm", method.args = list(family = "binomial"))
+
+
+p2 <- fruitornot %>%
+  ggplot(aes(x=l.height.cm, y = fruited)) +
+  geom_point() +
+  geom_smooth(se = FALSE, method = "glm", method.args = list(family = "binomial"))
+
+p1 + p2
+
+```
+
+### models for fruiting (aka reproduction)
+
+```{r}
+repro.spec <- linear_reg() %>%
+  set_engine("glmer", family = "binomial")
+
+repro.recipe <- fruitornot %>%
+  select(fruited, height.cm, l.height.cm, block) %>%
+  recipe() %>%
+  update_role(fruited, new_role = "outcome") %>% 
+  update_role(c(height.cm, l.height.cm, block), new_role = "predictor") %>%
+  step_poly(c(height.cm, l.height.cm), degree = 3, keep_original_cols = TRUE) %>%
+  step_rename_at(contains("poly"), fn = \(x) str_replace(x, "_poly_", ".p"))
+
+
+repro.wflow <- workflow() %>%
+  add_recipe(repro.recipe)
+
+```
+
+
+```{r}
+repro.models <- tibble(wflow=list(
+  
+  ml1_linear = {repro.wflow %>%
+      add_model(repro.spec,
+                formula = fruited ~ height.cm + (1|block)) },
+  
+  ml2_linear_log.height = {repro.wflow %>%
+      add_model(repro.spec,
+                formula = fruited ~ l.height.cm + (1|block)) },
+  
+  ml3_quad = {repro.wflow %>%
+      add_model(repro.spec,
+                formula = fruited ~ height.cm.p1 + height.cm.p2 + (1|block)) },
+  
+  ml4_quad_log.height = {repro.wflow %>%
+      add_model(repro.spec,
+                formula = fruited ~ l.height.cm.p1 + l.height.cm.p2 + (1|block)) },
+  
+  ml5_cubic = {repro.wflow %>%
+      add_model(repro.spec,
+                formula = fruited ~ height.cm.p1 + height.cm.p2 + height.cm.p3 + (1|block)) },
+  
+  ml6_cubic_log.height = {repro.wflow %>%
+      add_model(repro.spec,
+                formula = fruited ~ l.height.cm.p1 + l.height.cm.p2 + l.height.cm.p3  + (1|block)) }
+), 
+name = names(wflow))
+```
+
+Fit
+```{r}
+#plan(multisession, workers = 7)
+
+system.time( { # 110 seconds if using multisession; 
+  repro.models <- repro.models %>%
+    #mutate(fit = future_map(wflow, fit, data = fruit_growth,  .progress = TRUE, .options = furrr_options(packages = c("workflows", "multilevelmod"))),
+    mutate(fit = map(wflow, fit, data = fruitornot, .progress = TRUE),
+           glance = map(fit, glance)
+    ) 
+})
+
+repro.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
+#plan(sequential)
+```
+
+Linear with log height is the best
+```{r}
+repro.model.best <- repro.models %>% unnest(glance) %>% slice_min(BIC, n=1) %>% pull(fit) %>% magrittr::extract2(1) %>% extract_fit_engine
+
+summary(repro.model.best)
+```
+
+plot it:
+
+```{r, fig.asp=1}
+fruitornot %>%
+  ggplot(aes(x=l.height.cm, y=fruited)) +
+  geom_point() +
+  geom_function(fun = \(x) predict(repro.model.best, newdata=tibble(l.height.cm=x), type = "response", re.form=NA), color="red")
+```
+
+## Fruit number
+
+Here we are going to predict fruit from size 2 months after transplant
 
 ```{r}
 fruit_growth <- growth2 %>% filter(survey_date=="2023-09-06") %>%
@@ -93,6 +208,7 @@ fruit_growth <- growth2 %>% filter(survey_date=="2023-09-06") %>%
   right_join(fruit, by="Genotype")
 ```
 
+### plot the data
 ```{r, fig.asp=1}
 p1 <- fruit_growth %>%
   ggplot(aes(x=height.cm, y=fruits)) +
@@ -121,7 +237,7 @@ p4 <- fruit_growth %>%
 (p1 + p2) / (p3 + p4)
 ```
 
-## Some models
+### fruit number models
 
 ```{r}
 fruit.spec <- poisson_reg() %>%
@@ -191,6 +307,8 @@ fruit.models %>% select(-wflow, -fit) %>% unnest(glance) %>% arrange(BIC)
 Linear is the best...
 ```{r}
 fruit.model.best <- fruit.models %>% unnest(glance) %>% slice_min(BIC, n=1) %>% pull(fit) %>% magrittr::extract2(1) %>% extract_fit_engine
+
+summary(fruit.model.best)
 ```
 
 
@@ -203,13 +321,17 @@ fruit_growth %>%
   geom_function(fun = \(x) predict(fruit.model.best, newdata=tibble(height.cm=x), type = "response", re.form=NA), color="red")
 ```
 
+
 ## Establishment and recruit size...
 
 Also need something about probability of germination...
 
 calculate survival for first time period
 ```{r}
-tm2.params <- list()
+tm2.params <- list(
+  germination=0.33,
+  seedperfruit=40
+)
 
 tm2.params$establishment.prob <- survival2 %>% 
   filter(parent.pop=="TM2") %>% 
@@ -217,7 +339,7 @@ tm2.params$establishment.prob <- survival2 %>%
   summarize(establisment = 
               sum(death.date > "2023-07-26" | is.na(death.date)) / n() ) %>%
   pull(establisment)
-  
+
 
 tm2.params <- growth %>% filter(survey_date=="2023-07-03", parent.pop=="TM2") %>%
   summarize(recruit.size=mean(height.cm),
@@ -230,9 +352,13 @@ tm2.params
 reproduction function:
 ```{r}
 f.xy <- function(xp, x, tm2.params) {
-  tm2.params$establishment.prob *
-    dnorm(xp, mean = tm2.params$recruit.size, sd = tm2.params$recruit.size.sd) *
-    predict(fruit.model.best, newdata=tibble(height.cm=x), re.form = NA, type = "response")
+  # number of fruit
+  predict(fruit.model.best, newdata=tibble(height.cm=x), re.form = NA, type = "response") * 
+    
+    tm2.params$seedperfruit *
+    tm2.params$germination *
+    tm2.params$establishment.prob *
+    dnorm(xp, mean = tm2.params$recruit.size, sd = tm2.params$recruit.size.sd) 
 }
 ```
 
@@ -243,9 +369,9 @@ minSize <- min(growth2$height.cm, na.rm = TRUE)*.95
 maxSize <- max(growth2$height.cm, na.rm = TRUE)*1.05
 
 nBigMatrix <- 100 # matrix dimensions
-  b <- minSize + c(0:nBigMatrix) * (maxSize - minSize)/nBigMatrix # boundary points
-  y <- 0.5 * (b[1:nBigMatrix] + b[2:(nBigMatrix + 1)]) # mesh points
-  h <- y[2] - y[1] # step size
+b <- minSize + c(0:nBigMatrix) * (maxSize - minSize)/nBigMatrix # boundary points
+y <- 0.5 * (b[1:nBigMatrix] + b[2:(nBigMatrix + 1)]) # mesh points
+h <- y[2] - y[1] # step size
 ```
 
 
@@ -258,23 +384,22 @@ F <-  h*outer(y, y, f.xy, tm2.params=tm2.params)
 Function to plot matrices
 ```{r}
 plotMatrix <- function(m, title=NA, y) {
-m %>% as_tibble() %>%
-  magrittr::set_colnames(y) %>% 
-  mutate(size.t1=y) %>%
-  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
-  ggplot(aes(x=size.t, y = size.t1)) +
-  geom_raster(aes(fill = value)) +
-  geom_contour(aes(z = value),lwd=.25) +
-  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) +
-  scale_fill_viridis_c(option = "plasma") +
-  labs(x = "Size (t)", y = "Size (t + 1)", title = title) +
-  coord_equal() +
-  theme_bw()
+  m %>% as_tibble() %>%
+    magrittr::set_colnames(y) %>% 
+    mutate(size.t1=y) %>%
+    pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+    ggplot(aes(x=size.t, y = size.t1)) +
+    geom_raster(aes(fill = value)) +
+    geom_contour(aes(z = value),lwd=.25) +
+    scale_fill_viridis_c(option = "plasma") +
+    labs(x = "Size (t)", y = "Size (t + 1)", title = title) +
+    coord_equal() +
+    theme_bw()
 }
 ```
 
 Create a tibble to hold the matrices from each pop and fill it
 ```{r}
-plotMatrix(F, y=y)
+plotMatrix(F, title = "TM2 F-Matrix", y=y)
 ```
 
