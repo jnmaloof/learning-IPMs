@@ -1,0 +1,89 @@
+---
+title: "SimPop1"
+author: "Julin Maloof"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+First attempt at simulating a population
+
+```{r}
+library(AlphaSimR)
+library(tidyverse)
+logit <- brms::logit_scaled
+inv_logit <- brms::inv_logit_scaled
+```
+
+```{r}
+pop0 <- quickHaplo(nInd = 1000, nChr = 10, segSites = 100000) # note segSites is per chrom
+```
+
+Germination
+Initial size
+Establishment
+Growth rate
+Flowering probability
+Fruit per plant
+
+```{r}
+SP <- SimParam$new(pop0)
+
+traitMeans <- c(germination.prob = logit(0.33),
+                size = 10,
+                establishment.prob = logit(0.67),
+                growth = 1,
+                flowering.prob = logit(.25),
+                fruitPerPlant = 30)
+
+SP$addTraitA(nQtlPerChr = 10,
+              mean = traitMeans,
+              var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
+              gamma = TRUE,
+              shape = 1,
+              name = names(traitMeans)
+)
+
+SP$setVarE(h2=rep(0.5, length(traitMeans)))
+```
+
+```{r}
+pop1 <- newPop(pop0)
+pop1 <- setPheno(pop1)
+```
+
+```{r}
+pheno <- pop1@pheno %>% as_tibble()
+dim(pheno)
+head(pheno)
+```
+
+```{r}
+pheno %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(x=value)) +
+  geom_histogram() +
+  facet_wrap(~name, scales="free")
+  
+```
+
+```{r}
+pheno %>%
+  mutate(across(ends_with("prob"), brms::inv_logit_scaled)) %>%
+  pivot_longer(everything()) %>%
+  ggplot(aes(x=value)) +
+  geom_histogram() +
+  facet_wrap(~name, scales="free")
+```
+
+
+```{r}
+geno <- pullSegSiteGeno(pop1)
+dim(geno)
+geno[1:10, 1:10]
+```
+
+
