@@ -32,11 +32,11 @@ Fruit per plant
 ```{r}
 SP <- SimParam$new(pop0)
 
-traitMeans <- c(germination.prob = logit(0.33),
+traitMeans <- c(germination.logit = logit(0.33),
                 size = 10,
-                establishment.prob = logit(0.67),
+                establishment.logit = logit(0.67),
                 growth = 1,
-                flowering.prob = logit(.25),
+                flowering.logit = logit(.25),
                 fruitPerPlant = 30)
 
 SP$addTraitA(nQtlPerChr = 10,
@@ -61,6 +61,22 @@ dim(pheno)
 head(pheno)
 ```
 
+
+Convert pheno logits to probabilities and phenotypes! 
+```{r}
+pheno <- pheno %>%
+  mutate(across(ends_with(".logit"), .fns = inv_logit, 
+         .names = "{.col}.prob")) %>%
+  rename_with(.fn = \(n) str_replace(n, "\\.logit\\.prob", "\\.prob")) %>%
+  mutate(germinated = rbinom(n(), size=1, prob=germination.prob),
+         established = ifelse(germinated, rbinom(n(), size=1, prob=establishment.prob), NA),
+         flowered = ifelse(established, rbinom(n(), size = 1, prob = flowering.prob), NA),
+         growth = ifelse(established, growth, NA),
+         fruitPerPlant = ifelse(flowered, fruitPerPlant, NA)
+  )
+  
+```
+
 ```{r}
 pheno %>%
   pivot_longer(everything()) %>%
@@ -70,14 +86,6 @@ pheno %>%
   
 ```
 
-```{r}
-pheno %>%
-  mutate(across(ends_with("prob"), brms::inv_logit_scaled)) %>%
-  pivot_longer(everything()) %>%
-  ggplot(aes(x=value)) +
-  geom_histogram() +
-  facet_wrap(~name, scales="free")
-```
 
 
 ```{r}
