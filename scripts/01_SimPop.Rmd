@@ -7,6 +7,7 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+if(basename(getwd()) != "scripts") setwd("scripts")
 ```
 
 First attempt at simulating a population
@@ -14,12 +15,34 @@ First attempt at simulating a population
 ```{r}
 library(AlphaSimR)
 library(tidyverse)
+library(rrBLUP)
 logit <- brms::logit_scaled
 inv_logit <- brms::inv_logit_scaled
 ```
 
+I should play with these parameters to see how they affect LD
+```{r, eval=FALSE}
+system.time( 
+pop0 <- runMacs2(nInd = 1000, nChr = 10, segSites = 100000, 
+                  bp = 100000000,
+                  Ne = 5000, #250 seconds with 1000, 542 seconds with 5000.  
+                            # Larger Ne = more recombination, less LD
+                  histNe = 10000,
+                  histGen = 1000,
+                 nThreads = 5) # not clear that the multithreading is working...
+)
+
+
+saveRDS(pop0, file = "../output/pop0.alt.RDS")
+```
+
 ```{r}
-pop0 <- quickHaplo(nInd = 1000, nChr = 10, segSites = 100000) # note segSites is per chrom
+pop0 <- readRDS("../output/pop0.alt.RDS")
+```
+
+
+```{r}
+#pop0 <- quickHaplo(nInd = 1000, nChr = 10, segSites = 100000) # note segSites is per chrom
 ```
 
 Germination
@@ -35,19 +58,22 @@ SP <- SimParam$new(pop0)
 traitMeans <- c(germination.logit = logit(0.33),
                 size = 10,
                 establishment.logit = logit(0.67),
-                growth = 1,
+                growth = 1, # how should growth be modeled ? relative growth rate?
                 flowering.logit = logit(.25),
                 fruitPerPlant = 30)
 
 SP$addTraitA(nQtlPerChr = 10,
               mean = traitMeans,
               var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
-              gamma = TRUE,
+              gamma = TRUE, # check literature 
               shape = 1,
               name = names(traitMeans)
 )
 
 SP$setVarE(h2=rep(0.5, length(traitMeans)))
+
+# not sure why but I need to specify slightly fewer snps that what I set for segregating sites.
+SP$addSnpChip(nSnpPerChr = 99990) # Needed if I want to use the built-in rrBLUP
 ```
 
 ```{r}
@@ -94,4 +120,269 @@ dim(geno)
 geno[1:10, 1:10]
 ```
 
+## Genomic Prediction
+
+remove correlated SNPs.  
+
+```{r}
+cor(geno[,1:20])
+```
+
+```{r}
+source("remove_correlated_snps.R")
+
+# Test the remove_correlated_snps function with a small artificial dataset
+test_remove_correlated_snps <- function() {
+  set.seed(123)
+  # Create a test genotype matrix with known correlations
+  # 100 individuals, 10 SNPs
+  n_ind <- 100
+  
+  # Create independent SNPs
+  snp1 <- sample(0:2, n_ind, replace = TRUE)
+  snp2 <- sample(0:2, n_ind, replace = TRUE)
+  
+  # Create correlated SNPs
+  snp3 <- snp1 + rnorm(n_ind, sd = 0.1)  # highly correlated with snp1
+  snp4 <- sample(0:2, n_ind, replace = TRUE)
+  snp5 <- snp2 + rnorm(n_ind, sd = 0.1)  # highly correlated with snp2
+  snp6 <- sample(0:2, n_ind, replace = TRUE)
+  snp7 <- sample(0:2, n_ind, replace = TRUE)
+  snp8 <- snp7 + rnorm(n_ind, sd = 0.1)  # highly correlated with snp7
+  snp9 <- sample(0:2, n_ind, replace = TRUE)
+  snp10 <- sample(0:2, n_ind, replace = TRUE)
+  
+  # Combine into matrix
+  test_geno <- cbind(snp1, snp2, snp3, snp4, snp5, snp6, snp7, snp8, snp9, snp10)
+  
+  # Print correlation matrix to confirm correlations
+  cat("Correlation matrix of test data:\n")
+  print(round(cor(test_geno), 2))
+  
+  # Run the function
+  cat("\nRunning remove_correlated_snps function...\n")
+  kept <- remove_correlated_snps(test_geno, cor_threshold = 0.6, 
+                                window_size = 5, chunk_size = 5, verbose = TRUE)
+  
+  # We expect to keep one of each correlated pair
+  # So about 7 SNPs should be kept (10 - 3 correlated ones)
+  cat("\nExpected: The function should keep about 7 SNPs\n")
+  cat("Actual: The function kept", length(kept), "SNPs\n")
+  cat("Kept SNPs:", kept, "\n")
+  
+  # Check which correlations were removed
+  if(length(kept) > 1) {
+    cat("\nCorrelation matrix of kept SNPs:\n")
+    print(round(cor(test_geno[, kept]), 2))
+  }
+  
+  return(kept)
+}
+
+# Run the test
+test_results <- test_remove_correlated_snps()
+```
+
+```{r}
+# Remove correlated SNPs
+source("remove_correlated_snps.R")
+
+system.time({
+  # Extract chromosome information from SNP names
+  chr_info <- str_extract(colnames(geno), "^[^_]+")
+  unique_chrs <- unique(chr_info)
+  
+  # Set up parallel processing
+  library(parallel)
+  num_cores <- min(length(unique_chrs), detectCores() - 1)
+  cl <- makeCluster(num_cores)
+  
+  # Export required functions and data to the cluster
+  clusterExport(cl, c("remove_correlated_snps", "chr_info", "geno"))
+  
+  # Process each chromosome in parallel
+  kept_snps_list <- parLapply(cl, unique_chrs, function(chr) {
+    chr_indices <- which(chr_info == chr)
+    chr_geno <- geno[, chr_indices, drop = FALSE]
+    kept_indices <- remove_correlated_snps(chr_geno, cor_threshold = 0.5, 
+                                          window_size = 100, chunk_size = 10000, verbose = FALSE)
+    return(chr_indices[kept_indices])
+  })
+  
+  # Stop the cluster
+  stopCluster(cl)
+  
+  # Combine results from all chromosomes
+  kept_snps <- unlist(kept_snps_list)
+  
+  # Create filtered genotype matrix
+  geno_small <- geno[, kept_snps]
+})
+
+# Check the dimensions of the filtered genotype data
+dim(geno)
+dim(geno_small)
+```
+
+```{r}
+# Calculate minor allele frequencies (MAF)
+allele_freqs <- colMeans(geno_small) / 2
+minor_allele_freqs <- pmin(allele_freqs, 1 - allele_freqs)  # MAF is always <= 0.5
+
+# Plot MAF distribution
+hist(minor_allele_freqs, 
+  main="Minor Allele Frequency Distribution", 
+  xlab="Minor Allele Frequency", 
+  breaks=20,
+  xlim=c(0,0.5))
+
+# Get some summary statistics of MAF
+summary(minor_allele_freqs)
+```
+
+```{r}
+if(min(geno_small) == 0) geno_small <- geno_small - 1
+
+# 260 seconds
+system.time(ans <- mixed.solve(pheno$size, Z = geno_small, method = "REML"))
+
+prediction <- (geno_small %*% ans$u ) + ans$beta[1] # add intercept
+
+# Check the prediction
+head(prediction)
+# Compare with actual phenotypes
+comparison <- data.frame(Actual = pheno$size, Predicted = prediction)
+head(comparison)
+# Calculate prediction accuracy
+cor(comparison$Actual, comparison$Predicted)
+# Plot actual vs predicted
+ggplot(comparison, aes(x = Actual, y = Predicted)) +
+  geom_point() +
+  geom_smooth(method = "lm", color = "blue") +
+  labs(title = "Actual vs Predicted Size",
+       x = "Actual Size",
+       y = "Predicted Size") +
+  theme_classic()
+```
+
+```{r}
+# K-fold Cross Validation for Genomic Prediction
+set.seed(123) # For reproducibility
+k <- 5 # Number of folds
+n <- nrow(pheno)
+fold_indices <- sample(rep(1:k, length.out = n))
+
+# Initialize a data frame to store results
+cv_results <- data.frame(
+  Fold = integer(),
+  Trait = character(),
+  Correlation = numeric(),
+  RMSE = numeric()
+)
+
+# Function to calculate RMSE
+rmse <- function(actual, predicted) {
+  sqrt(mean((actual - predicted)^2, na.rm = TRUE))
+}
+
+# Run cross-validation for each trait
+traits <- c("size", "growth", "fruitPerPlant")
+
+for (trait in traits) {
+  # Skip if too many NAs
+  if (sum(!is.na(pheno[[trait]])) < n * 0.5) {
+    cat("Skipping", trait, "due to too many NAs\n")
+    next
+  }
+  
+  cat("Running cross-validation for trait:", trait, "\n")
+  
+  for (i in 1:k) {
+    # Split data into training and testing sets
+    test_indices <- which(fold_indices == i)
+    train_indices <- which(fold_indices != i)
+    
+    # Extract training and testing data
+    X_train <- geno_small[train_indices, ]
+    y_train <- pheno[[trait]][train_indices]
+    X_test <- geno_small[test_indices, ]
+    y_test <- pheno[[trait]][test_indices]
+    
+    # Skip NA values
+    valid_train <- !is.na(y_train)
+    if (sum(valid_train) < 10) { # Need minimum number of samples
+      cat("  Fold", i, "has insufficient non-NA training data\n")
+      next
+    }
+    
+    # Train model
+    model <- try(mixed.solve(y_train[valid_train], 
+                             Z = X_train[valid_train, ], 
+                             method = "REML"), silent = TRUE)
+    
+    if (class(model) == "try-error") {
+      cat("  Error in fold", i, "- skipping\n")
+      next
+    }
+    
+    # Make predictions on test set
+    predictions <- as.vector(X_test %*% model$u) + model$beta[1]
+    
+    # Evaluate predictions
+    valid_test <- !is.na(y_test)
+    if (sum(valid_test) < 5) { # Need minimum number for evaluation
+      cat("  Fold", i, "has insufficient non-NA test data\n")
+      next
+    }
+    
+    correlation <- cor(y_test[valid_test], predictions[valid_test], 
+                      use = "complete.obs")
+    error <- rmse(y_test[valid_test], predictions[valid_test])
+    
+    # Store results
+    cv_results <- rbind(cv_results, data.frame(
+      Fold = i,
+      Trait = trait,
+      Correlation = correlation,
+      RMSE = error
+    ))
+  }
+}
+
+# Summarize results by trait
+cv_summary <- cv_results %>%
+  group_by(Trait) %>%
+  summarize(
+    Mean_Correlation = mean(Correlation, na.rm = TRUE),
+    SD_Correlation = sd(Correlation, na.rm = TRUE),
+    Mean_RMSE = mean(RMSE, na.rm = TRUE),
+    SD_RMSE = sd(RMSE, na.rm = TRUE),
+    n_folds = n()
+  )
+
+# Print summary
+print(cv_summary)
+
+# Create visualization
+ggplot(cv_results, aes(x = Trait, y = Correlation)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.5, color = "blue") +
+  theme_classic() +
+  labs(title = "Cross-Validation Results by Trait",
+       y = "Prediction Accuracy (Correlation)",
+       x = "Trait")
+
+# Plot RMSE
+ggplot(cv_results, aes(x = Trait, y = RMSE)) +
+  geom_boxplot() +
+  geom_jitter(width = 0.2, alpha = 0.5, color = "red") +
+  theme_classic() +
+  labs(title = "Cross-Validation Error by Trait",
+       y = "RMSE",
+       x = "Trait")
+```
+
+
+```{r}
+```
 
