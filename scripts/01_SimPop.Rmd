@@ -23,9 +23,9 @@ inv_logit <- brms::inv_logit_scaled
 I should play with these parameters to see how they affect LD
 ```{r, eval=FALSE}
 system.time( 
-pop0 <- runMacs2(nInd = 1000, nChr = 10, segSites = 100000, 
-                  bp = 100000000,
-                  Ne = 5000, #250 seconds with 1000, 542 seconds with 5000.  
+pop0 <- runMacs2(nInd = 1000, nChr = 10, segSites = 10000,  # reduced from 100,000 for troubleshooting and fast running
+                  bp = 10000000, # reduced from 100,000,000 to reduce runtime, etc
+                  Ne = 1000, #250 seconds with 1000, 542 seconds with 5000.  
                             # Larger Ne = more recombination, less LD
                   histNe = 10000,
                   histGen = 1000,
@@ -36,13 +36,13 @@ pop0 <- runMacs2(nInd = 1000, nChr = 10, segSites = 100000,
 saveRDS(pop0, file = "../output/pop0.alt.RDS")
 ```
 
-```{r}
+```{r, eval=FALSE}
 pop0 <- readRDS("../output/pop0.alt.RDS")
 ```
 
 
-```{r}
-#pop0 <- quickHaplo(nInd = 1000, nChr = 10, segSites = 100000) # note segSites is per chrom
+```{r, eval=TRUE}
+pop0 <- quickHaplo(nInd = 1000, nChr = 10, segSites = 1000) # note segSites is per chrom
 ```
 
 Germination
@@ -55,30 +55,30 @@ Fruit per plant
 ```{r}
 SP <- SimParam$new(pop0)
 
-traitMeans <- c(germination.logit = logit(0.33),
+traitMeans <- c(#germination.logit = logit(0.33),
+germination.logit = logit(1),
                 size = 10,
                 establishment.logit = logit(0.67),
                 growth = 1, # how should growth be modeled ? relative growth rate?
                 flowering.logit = logit(.25),
                 fruitPerPlant = 30)
 
-SP$addTraitA(nQtlPerChr = 10,
+SP$addTraitA(nQtlPerChr = 500,
               mean = traitMeans,
-              var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
-              gamma = TRUE, # check literature 
-              shape = 1,
+  #            var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
+               var = rep(10, length(traitMeans)),
+              gamma = FALSE, # check literature 
+             # shape = 1,
               name = names(traitMeans)
 )
 
-SP$setVarE(h2=rep(0.5, length(traitMeans)))
+SP$setVarE(h2=rep(0.9, length(traitMeans)))
 
-# not sure why but I need to specify slightly fewer snps that what I set for segregating sites.
-SP$addSnpChip(nSnpPerChr = 99990) # Needed if I want to use the built-in rrBLUP
 ```
 
 ```{r}
-pop1 <- newPop(pop0)
-pop1 <- setPheno(pop1)
+pop1 <- newPop(pop0, simParam = SP)
+pop1 <- setPheno(pop1, simParam = SP)
 ```
 
 ```{r}
@@ -130,57 +130,7 @@ cor(geno[,1:20])
 
 ```{r}
 source("remove_correlated_snps.R")
-
-# Test the remove_correlated_snps function with a small artificial dataset
-test_remove_correlated_snps <- function() {
-  set.seed(123)
-  # Create a test genotype matrix with known correlations
-  # 100 individuals, 10 SNPs
-  n_ind <- 100
-  
-  # Create independent SNPs
-  snp1 <- sample(0:2, n_ind, replace = TRUE)
-  snp2 <- sample(0:2, n_ind, replace = TRUE)
-  
-  # Create correlated SNPs
-  snp3 <- snp1 + rnorm(n_ind, sd = 0.1)  # highly correlated with snp1
-  snp4 <- sample(0:2, n_ind, replace = TRUE)
-  snp5 <- snp2 + rnorm(n_ind, sd = 0.1)  # highly correlated with snp2
-  snp6 <- sample(0:2, n_ind, replace = TRUE)
-  snp7 <- sample(0:2, n_ind, replace = TRUE)
-  snp8 <- snp7 + rnorm(n_ind, sd = 0.1)  # highly correlated with snp7
-  snp9 <- sample(0:2, n_ind, replace = TRUE)
-  snp10 <- sample(0:2, n_ind, replace = TRUE)
-  
-  # Combine into matrix
-  test_geno <- cbind(snp1, snp2, snp3, snp4, snp5, snp6, snp7, snp8, snp9, snp10)
-  
-  # Print correlation matrix to confirm correlations
-  cat("Correlation matrix of test data:\n")
-  print(round(cor(test_geno), 2))
-  
-  # Run the function
-  cat("\nRunning remove_correlated_snps function...\n")
-  kept <- remove_correlated_snps(test_geno, cor_threshold = 0.6, 
-                                window_size = 5, chunk_size = 5, verbose = TRUE)
-  
-  # We expect to keep one of each correlated pair
-  # So about 7 SNPs should be kept (10 - 3 correlated ones)
-  cat("\nExpected: The function should keep about 7 SNPs\n")
-  cat("Actual: The function kept", length(kept), "SNPs\n")
-  cat("Kept SNPs:", kept, "\n")
-  
-  # Check which correlations were removed
-  if(length(kept) > 1) {
-    cat("\nCorrelation matrix of kept SNPs:\n")
-    print(round(cor(test_geno[, kept]), 2))
-  }
-  
-  return(kept)
-}
-
-# Run the test
-test_results <- test_remove_correlated_snps()
+source("test_remove_correlated_snps.R")
 ```
 
 ```{r}
@@ -204,7 +154,7 @@ system.time({
   kept_snps_list <- parLapply(cl, unique_chrs, function(chr) {
     chr_indices <- which(chr_info == chr)
     chr_geno <- geno[, chr_indices, drop = FALSE]
-    kept_indices <- remove_correlated_snps(chr_geno, cor_threshold = 0.5, 
+    kept_indices <- remove_correlated_snps(chr_geno, cor_threshold = 0.8, 
                                           window_size = 100, chunk_size = 10000, verbose = FALSE)
     return(chr_indices[kept_indices])
   })
@@ -238,10 +188,16 @@ hist(minor_allele_freqs,
 
 # Get some summary statistics of MAF
 summary(minor_allele_freqs)
+
+# filter for maf
+geno_small_filter <- geno_small[, minor_allele_freqs >= 0.1]
+dim(geno_small_filter)
 ```
 
-```{r}
+```{r, eval=FALSE}
 if(min(geno_small) == 0) geno_small <- geno_small - 1
+if(min(geno_small_filter) == 0) geno_small_filter <- geno_small_filter - 1
+
 
 # 260 seconds
 system.time(ans <- mixed.solve(pheno$size, Z = geno_small, method = "REML"))
@@ -265,7 +221,35 @@ ggplot(comparison, aes(x = Actual, y = Predicted)) +
   theme_classic()
 ```
 
-```{r}
+
+Test a single test/train split
+```{r, eval=TRUE}
+if(min(geno_small) == 0) geno_small <- geno_small - 1
+if(min(geno_small_filter) == 0) geno_small_filter <- geno_small_filter - 1
+#set.seed(555)
+train <- sample(1:nrow(pheno), size=0.7 * nrow(pheno))
+test <- setdiff(1:nrow(pheno), train)
+
+pheno_train <- pheno[train,]
+pheno_test <- pheno[test,]
+
+geno_train <- geno_small_filter[train,]
+geno_test <- geno_small_filter[test,]
+
+ans.train <- mixed.solve(pheno_train$size, Z = geno_train, method = "REML")
+
+prediction.train <- geno_train %*% ans.train$u + ans.train$beta[1]
+
+cor(prediction.train, pheno_train$size)
+
+prediction.test <- (geno_test %*% ans.train$u) + ans.train$beta[1] 
+
+cor(prediction.test,  pheno_test$size)
+```
+
+
+
+```{r, eval=FALSE}
 # K-fold Cross Validation for Genomic Prediction
 set.seed(123) # For reproducibility
 k <- 5 # Number of folds
@@ -384,5 +368,86 @@ ggplot(cv_results, aes(x = Trait, y = RMSE)) +
 
 
 ```{r}
+# Random Forest Genomic Prediction using tidymodels
+library(tidymodels)
+library(ranger) # Fast implementation of Random Forest
+library(future)
+plan(multisession, workers = 7)
+
+model_data <- tibble(cbind(size=pheno$size, as_tibble(geno_small_filter)))
+  
+  # Split data into training and testing
+  set.seed(42)
+  data_split <- initial_split(model_data, prop = 0.8)
+  train_data <- training(data_split)
+  test_data <- testing(data_split)
+  
+  # Create cross-validation folds for hyperparameter tuning
+  cv_folds <- vfold_cv(train_data, v = 5)
+  
+  # Define model specification with hyperparameter tuning
+  rf_model <- rand_forest(
+    mtry = tune(),
+    min_n = tune(),
+    trees = 500
+  ) %>%
+    set_engine("ranger", importance = "impurity") %>%
+    set_mode("regression")
+  
+  # Define recipe
+  rf_recipe <- recipe(size ~ ., data = train_data)
+  
+  # Create workflow
+  rf_workflow <- workflow() %>%
+    add_model(rf_model) %>%
+    add_recipe(rf_recipe)
+  
+  # Define grid for tuning
+  rf_grid <- grid_regular(
+    mtry(range = c(floor(sqrt(ncol(train_data) - 1)), floor(ncol(train_data)/3))),
+    min_n(range = c(2, 10)),
+    levels = 3
+  )
+  
+  # Tune hyperparameters
+  rf_tuning <- tune_grid(
+    rf_workflow,
+    resamples = cv_folds,
+    grid = rf_grid,
+    metrics = metric_set(rmse, rsq)
+  )
+  
+rf_tuning %>% unnest(.metrics) %>% filter(.metric=="rsq") %>% arrange(desc(.estimate))
+
+  # Select best hyperparameters
+  best_params <- select_best(rf_tuning, metric = "rmse")
+  
+  # Finalize workflow with best parameters
+  final_workflow <- rf_workflow %>%
+    finalize_workflow(best_params)
+  
+  # Train final model
+  final_fit <- fit(final_workflow, train_data)
+  
+  # Evaluate on test data
+  test_results <- final_fit %>%
+    predict(test_data) %>%
+    bind_cols(test_data) %>%
+    metrics(truth = trait_value, estimate = .pred)
+  
+  # Get variable importance
+  var_imp <- final_fit %>%
+    extract_fit_parsnip() %>%
+    vip::vi()
+  
+  # Cross-validation results
+  cv_results <- rf_tuning %>%
+    collect_metrics() %>%
+    filter(.metric == "rmse") %>%
+    filter(mtry == best_params$mtry, min_n == best_params$min_n)
+  
+
+
+
 ```
 
