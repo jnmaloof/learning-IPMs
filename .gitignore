@@ -47,3 +47,13 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# repo specific stuff
+*.vcf
+*.trees
+*.RDS
+*.rds
+*.DS_Store
+*.Rdata
+
+
