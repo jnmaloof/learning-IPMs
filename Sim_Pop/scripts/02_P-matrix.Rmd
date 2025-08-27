@@ -1,0 +1,521 @@
+---
+title: "02_P-matrix"
+author: "Brandie QC / Julin Maloof"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+P-matrix from a simple simulated population
+
+This is Brandie's script
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# IPM from Population Simulation
+
+\*Simulations done in "Population_Sim_Trial.Rmd" file (currently using AlphaSimR)
+
+**Goal:** Compare IPM created from just phenotypes from the simulation to an IPM created from phenotypes + genotype scores.
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(broom)
+library(broom.mixed)
+library(magrittr)
+library(lmerTest)
+conflicted::conflicts_prefer(lmerTest::lmer)
+conflicted::conflicts_prefer(dplyr::filter)
+conflicted::conflicts_prefer(dplyr::mutate)
+```
+
+## Load the data
+```{r}
+simpop <- read_csv("../output/PopSim_Phenos-Genos_v3.csv")
+names(simpop)
+#logit_pheno = scaled probability/phenotype
+#_geno = genotype score for that trait 
+#size = height calculated from simulated Weibull parameters (alpha, beta, k, and delta)
+####Note: we will use the genotype score for k for this 
+#elapsed_weeks = interval between weeks - should all be 1 in this data
+```
+
+### Add size next and weekly surv
+```{r}
+unique(simpop$established) #NA = did not germinate, 1 = established (survived first 3 weeks in field); 0 = did not establish
+unique(simpop$y1surv) #NA = did not establish, 1 = survived to week 12; 0 = did not survive 
+#simpop %>% select(Indiv_ID, germinated, established, y1surv, k_pheno, week, size) %>% filter(Indiv_ID<5)
+
+simpop_timeprep <- simpop %>%
+  mutate(weeks = as.numeric(week - 1), #Weeks since week 1 (equivalent to pre-transplant or initial size) 
+         size = if_else(germinated==0, NA, size) #no size if no germ
+         ) %>%   
+  group_by(Indiv_ID) %>% 
+  mutate(surv=if_else(germinated==0, NA, #surv = NA if you did not germ 
+                        if_else(week==1, 1, #if you did germinate, assume you survived to week 1 (equivalent to pre-transplant size time point)
+                                if_else(established==0, 0, #surv = 0 after week 1 if you did not establish 
+                                        if_else(week<5, 1, #if you did establish, your surv is equal to 1 for the first 3 weeks post-transplant 
+                                                y1surv) #your survival for weeks 5-12 is then equal to your y1surv
+                                        )))) %>% 
+  mutate(death.week=if_else(y1surv==1, NA, #if survive year 1 no death week 
+                            first(week, order_by = surv)) #first week where surv = 0 
+           ) %>% 
+  #note we only have establishment and y1surv survival from the pop sim --> little weekly variation 
+  mutate(size_next = lead(size, order_by = week), #next time point's size) 
+         size = if_else(is.na(death.week), size,
+                        if_else(week>death.week, NA, size))) %>%  
+  ungroup() %>% 
+  mutate(size_next=if_else(surv==0, NA, size_next))
+
+simpop_timeprep %>% #look at data for a few indivs to see if above worked
+  drop_na(surv) %>% 
+  select(Indiv_ID, week, weeks, germinated, established, y1surv, size, size_next, surv, death.week) %>% 
+  filter(Indiv_ID<25)
+
+simpop_timeprep_surv <- simpop_timeprep %>% drop_na(surv, size) #for surv models 
+simpop_timeprep_size <- simpop_timeprep %>% drop_na(size, size_next) #for size models 
+```
+
+### Scaling and transformations
+```{r}
+simpop_timeprep_surv %>%  #slightly skewed
+  ggplot(aes(x=size)) +
+  geom_histogram()
+
+simpop_timeprep_surv_scaled <- simpop_timeprep_surv %>% 
+  mutate(logSize=log(size),
+         sqSize=sqrt(size)) 
+
+simpop_timeprep_surv_scaled %>% #not better
+  ggplot(aes(x=logSize)) +
+  geom_histogram()
+
+simpop_timeprep_surv_scaled %>% #not better
+  ggplot(aes(x=sqSize)) +
+  geom_histogram()
+```
+
+## Survival Models
+
+### Phenos Only
+```{r}
+surv.models_pheno <- tribble(
+  ~name,          ~f,
+  "1_linear_size",                 "surv ~ size", 
+  "2_linear_weeks",                "surv ~ size + weeks",
+  "3a_quadratic_size",             "surv ~ size + I(size^2)", 
+  "3b_quadratic_size_weeks",       "surv ~ size + I(size^2) + weeks", 
+  "4a_cubic_size",                 "surv ~ size + I(size^2) + I(size^3)",
+  "4b_cubic_size_weeks",           "surv ~ size + I(size^2) + I(size^3) + weeks"
+)
+
+#run the models 
+surv.models_pheno <- surv.models_pheno %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = simpop_timeprep_surv, 
+                            family = "binomial")), #, #run the models 
+         predict = map(glm, predict, type = "response"), 
+         glance = map(glm, tidy),
+         AIC = map(glm, AIC),
+         BIC = map(glm, BIC)) #glance at the model results
+
+surv.models_pheno %>% select(-f, -glm, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
+surv.models_pheno %>% select(-f, -glm, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
+#3a_quadratic size best by AIC and BIC
+```
+
+```{r}
+survival.model.final_pheno <- surv.models_pheno %>% filter(name == "3a_quadratic_size") %>% pull(glm) %>% magrittr::extract2(1)
+summary(survival.model.final_pheno)
+```
+
+#### Predicted vs. Observed Survival
+```{r}
+simpop_timeprep_surv %>% 
+  mutate(pred_fixef = predict(survival.model.final_pheno, newdata = ., type="response", re.form = NA)) %>% 
+  ggplot(aes(x = size, y = surv)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = pred_fixef), 
+            color = "blue", 
+            size = 1.2, alpha=0.3) 
+```
+
+### Phenos + Genos
+```{r}
+surv.models_genos <- tribble(
+  ~name,          ~f,
+  "1a_linear_size",                 "surv ~ size", 
+  "1b_linear_size_genos",           "surv ~ size + establishment.logit_geno + y1surv.logit_geno", 
+  "2a_linear_weeks",                "surv ~ size + weeks",
+  "2b_linear_weeks_geno",           "surv ~ size + weeks + establishment.logit_geno + y1surv.logit_geno",
+  "3a_quadratic_size",              "surv ~ size + I(size^2)", 
+  "3b_quadratic_size_weeks",        "surv ~ size + I(size^2) + weeks", 
+  "3c_quadratic_size_weeks_geno",   "surv ~ size + I(size^2) + weeks + establishment.logit_geno + y1surv.logit_geno",
+  "4a_cubic_size",                  "surv ~ size + I(size^2) + I(size^3)",
+  "4b_cubic_size_weeks",            "surv ~ size + I(size^2) + I(size^3) + weeks",
+  "4c_cubic_size_weeks_geno",       "surv ~ size + I(size^2) + I(size^3) + weeks + establishment.logit_geno + y1surv.logit_geno"
+)
+
+#run the models 
+surv.models_genos <- surv.models_genos %>%
+  mutate(glm = map(f, ~ glm(as.formula(.), 
+                            data = simpop_timeprep_surv, 
+                            family = "binomial")), #, #run the models 
+         predict = map(glm, predict, type = "response"), 
+         glance = map(glm, tidy),
+         AIC = map(glm, AIC),
+         BIC = map(glm, BIC)) #glance at the model results
+
+surv.models_genos %>% select(-f, -glm, -predict) %>% unnest(BIC) %>% arrange(BIC) #look at the model fitting info 
+surv.models_genos %>% select(-f, -glm, -predict) %>% unnest(AIC) %>% arrange(AIC) #look at the model fitting info 
+#3a_quadratic_size best by BIC
+#3c_quadratic_size_weeks_geno best by AIC 
+```
+
+```{r}
+survival.model.final_genos <- surv.models_genos %>% filter(name == "3c_quadratic_size_weeks_geno") %>% pull(glm) %>% magrittr::extract2(1)
+summary(survival.model.final_genos)
+```
+
+#### Predicted vs. Observed Survival
+```{r}
+simpop_timeprep_surv %>% 
+  mutate(pred_fixef = predict(survival.model.final_genos, newdata = ., type="response", re.form = NA)) %>% 
+  ggplot(aes(x = size, y = surv)) +
+  geom_point(alpha=.2) +
+  geom_line(aes(y = pred_fixef), 
+            color = "blue", 
+            size = 1.2, alpha=0.3) 
+```
+
+## Growth Models
+
+### Observed Patterns
+```{r}
+simpop_timeprep_size %>% 
+  ggplot(aes(x=size, y=size_next)) +
+  geom_point()  +
+  geom_abline() +
+  geom_smooth(method = "lm")
+```
+
+### Phenos Only
+```{r}
+size.models_pheno <- tribble(
+  ~name,          ~f,
+  "1_linear_size",                 "size_next ~ size", 
+  "2_linear_weeks",                "size_next ~ size + weeks",
+  "3a_quadratic_size",             "size_next ~ size + I(size^2)", 
+  "3b_quadratic_size_weeks",       "size_next ~ size + I(size^2) + weeks", 
+  "4a_cubic_size",                 "size_next ~ size + I(size^2) + I(size^3)",
+  "4b_cubic_size_weeks",           "size_next ~ size + I(size^2) + I(size^3) + weeks"
+)
+
+#run the models 
+size.models_pheno <- size.models_pheno %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), 
+                            data = simpop_timeprep_size)), #, #run the models 
+         predict = map(lm, predict), 
+         glance = map(lm, glance)) #glance at the model results
+
+size.models_pheno %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+size.models_pheno %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+#3b_quadratic_size_weeks best by AIC and BIC
+```
+
+```{r}
+size.model.final_pheno <- size.models_pheno %>% filter(name == "3b_quadratic_size_weeks") %>% pull(lm) %>% magrittr::extract2(1)
+summary(size.model.final_pheno)
+```
+
+#### Predicted vs. Observed Growth
+```{r}
+simpop_timeprep_size %>% 
+  cbind(predicted={size.models_pheno %>% filter(name=="3b_quadratic_size_weeks") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=size_next, y = predicted)) +
+  geom_point() +
+  geom_abline(color="skyblue2")
+```
+
+### Phenos + Genos
+```{r}
+size.models_genos <- tribble(
+  ~name,          ~f,
+  "1a_linear_size",                 "size_next ~ size", 
+  "1b_linear_size_geno",            "size_next ~ size + k_geno", 
+  "2a_linear_weeks",                "size_next ~ size + weeks",
+  "2b_linear_weeks_geno",           "size_next ~ size + weeks + k_geno",
+  "3a_quadratic_size",              "size_next ~ size + I(size^2)", 
+  "3b_quadratic_size_weeks",        "size_next ~ size + I(size^2) + weeks", 
+  "3c_quadratic_size_weeks_geno",   "size_next ~ size + I(size^2) + weeks + k_geno",
+  "4a_cubic_size",                  "size_next ~ size + I(size^2) + I(size^3)",
+  "4b_cubic_size_weeks",            "size_next ~ size + I(size^2) + I(size^3) + weeks",
+  "4c_cubic_size_weeks_geno",       "size_next ~ size + I(size^2) + I(size^3) + weeks + k_geno"
+)
+
+#run the models 
+size.models_genos <- size.models_genos %>%
+  mutate(lm = map(f, ~ lm(as.formula(.), 
+                            data = simpop_timeprep_size)), #, #run the models 
+         predict = map(lm, predict), 
+         glance = map(lm, glance)) #glance at the model results
+
+size.models_genos %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(BIC) #look at the model fitting info 
+size.models_genos %>% select(-f, -lm, -predict) %>% unnest(glance) %>% arrange(AIC) #look at the model fitting info 
+#3c_quadratic_size_weeks_geno best by AIC and BIC
+```
+
+```{r}
+size.model.final_genos <- size.models_genos %>% filter(name == "3c_quadratic_size_weeks_geno") %>% pull(lm) %>% magrittr::extract2(1)
+summary(size.model.final_genos)
+```
+
+#### Predicted vs. Observed Growth
+```{r}
+simpop_timeprep_size %>% 
+  cbind(predicted={size.models_genos %>% filter(name=="3c_quadratic_size_weeks_geno") %>% pull(predict) %>% unlist()}) %>%
+  ggplot(aes(x=size_next, y = predicted)) +
+  geom_point() +
+  geom_abline(color="skyblue2")
+```
+
+## P Matrix
+
+### Make a dataframe to store the parameters
+```{r}
+params=data.frame(
+  surv.int=NA, # Intercept from logistic regression of survival
+  surv.slope1=NA, # Slope from logistic regression of survival
+  surv.slope2=NA, # Quadratic slope from logistic regression of survival
+  growth.int=NA, # Intercept from linear regression of growth
+  growth.slope1=NA, # Slope from linear regression of growth
+  growth.slope2=NA, # Quadratic slope from linear regression of growth
+  growth.sd=NA # Residual sd from the linear regression of growth
+)
+
+params_phenos <- params
+params_genos <- params
+```
+
+### Use broom:tidy to create a df with the coef from each model
+```{r}
+surv.coefs_pheno <- surv.models_pheno %>% 
+  filter(name == "3a_quadratic_size") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_phenos$surv.int <- surv.coefs_pheno %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_phenos$surv.slope1 <- surv.coefs_pheno %>% filter(term == "size") %>% pull(estimate)
+params_phenos$surv.slope2 <- surv.coefs_pheno %>% filter(term == "I(size^2)") %>% pull(estimate)
+```
+
+```{r}
+surv.coefs_genos <- surv.models_genos %>% 
+  filter(name == "3c_quadratic_size_weeks_geno") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_genos$surv.int <- surv.coefs_genos %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_genos$surv.slope1 <- surv.coefs_genos %>% filter(term == "size") %>% pull(estimate)
+params_genos$surv.slope2 <- surv.coefs_genos %>% filter(term == "I(size^2)") %>% pull(estimate)
+```
+
+```{r}
+growth.coefs_pheno <- size.models_pheno %>% 
+  filter(name == "3b_quadratic_size_weeks") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_phenos$growth.int <- growth.coefs_pheno %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_phenos$growth.slope1 <- growth.coefs_pheno %>% filter(term == "size") %>% pull(estimate)
+params_phenos$growth.slope2 <- growth.coefs_pheno %>% filter(term == "I(size^2)") %>% pull(estimate)
+
+#Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
+params_phenos$growth.sd <- size.models_pheno %>% filter(name == "3b_quadratic_size_weeks") %>% unnest(glance) %>% pull(sigma)
+```
+
+```{r}
+growth.coefs_genos <- size.models_genos %>% 
+  filter(name == "3c_quadratic_size_weeks_geno") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_genos$growth.int <- growth.coefs_genos %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_genos$growth.slope1 <- growth.coefs_genos %>% filter(term == "size") %>% pull(estimate)
+params_genos$growth.slope2 <- growth.coefs_genos %>% filter(term == "I(size^2)") %>% pull(estimate)
+
+#Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
+params_genos$growth.sd <- size.models_genos %>% filter(name == "3c_quadratic_size_weeks_geno") %>% unnest(glance) %>% pull(sigma)
+```
+
+### Define the functions
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x_phenos=function(x,params_phenos) {
+  u=exp(params_phenos$surv.int + params_phenos$surv.slope1*x + params_phenos$surv.slope2*x^2)
+  return(u/(1+u)) 
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+g.yx_phenos=function(xp,x,params_phenos) {
+  dnorm(xp,mean=params_phenos$growth.int + params_phenos$growth.slope1*x + params_phenos$growth.slope2*x^2, sd=params_phenos$growth.sd)
+}
+```
+
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x_genos=function(x,params_genos) {
+  u=exp(params_genos$surv.int + params_genos$surv.slope1*x + params_genos$surv.slope2*x^2)
+  return(u/(1+u)) 
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+g.yx_genos=function(xp,x,params_genos) {
+  dnorm(xp,mean=params_genos$growth.int + params_genos$growth.slope1*x + params_genos$growth.slope2*x^2, sd=params_genos$growth.sd)
+}
+```
+
+### Define the structure of the IPM
+```{r}
+# the sizes we are integrating over
+minSize<-min(simpop_timeprep$size,na.rm=T) 
+maxSize<-max(simpop_timeprep$size,na.rm=T) 
+
+n=100 # dimensions of the matrix 
+
+b=minSize+c(0:n)*(maxSize-minSize)/n # boundary points
+y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
+h=y[2]-y[1] # step size
+```
+
+### Make the matrices (G, S, and P)
+```{r}
+G_phenos=h*outer(y,y,g.yx_phenos,params=params_phenos) # growth matrix
+
+S_phenos=s.x_phenos(y,params=params_phenos) # survival at each size midpoint
+
+P_phenos=G_phenos # placeholder; redefine P on the next line
+for(i in 1:n) P_phenos[,i]=G_phenos[,i]*S_phenos[i] # growth/survival matrix
+```
+
+```{r}
+G_genos=h*outer(y,y,g.yx_genos,params=params_genos) # growth matrix
+
+S_genos=s.x_genos(y,params=params_genos) # survival at each size midpoint
+
+P_genos=G_genos # placeholder; redefine P on the next line
+for(i in 1:n) P_genos[,i]=G_genos[,i]*S_genos[i] # growth/survival matrix
+```
+
+### Plot the matrix
+```{r}
+P_phenos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos Only") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+```{r}
+P_genos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos + Genos") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+### Check for eviction
+```{r}
+plot(y,s.x_phenos(y,params_phenos), #fitted survival model 
+     xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(P_phenos,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
+#some eviction at larger sizes
+```
+```{r}
+plot(y,s.x_genos(y,params_genos), #fitted survival model 
+     xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(P_genos,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
+#some eviction at larger sizes
+```
+#### Eviction correction using a constant 
+```{r}
+Pc_phenos=G_phenos # placeholder; redefine P on the next line
+for(i in 1:n) Pc_phenos[,i]=G_phenos[,i]*S_phenos[i] # growth/survival matrix
+nvals <- colSums(Pc_phenos, na.rm = TRUE)
+Pc_phenos <- t((t(Pc_phenos)/nvals) * s.x_phenos(y, params=params_phenos))
+
+plot(y,s.x_phenos(y,params_phenos),xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(Pc_phenos,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+```{r}
+Pc_genos=G_genos # placeholder; redefine P on the next line
+for(i in 1:n) Pc_genos[,i]=G_genos[,i]*S_genos[i] # growth/survival matrix
+nvals <- colSums(Pc_genos, na.rm = TRUE)
+Pc_genos <- t((t(Pc_genos)/nvals) * s.x_genos(y, params=params_genos))
+
+plot(y,s.x_genos(y,params_genos),xlab="Size",type="l",
+        ylab="Survival Probability",lwd=12)
+     points(y,apply(Pc_genos,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+#### Plot corrected P matrices 
+```{r}
+Pc_phenos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos Only") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+
+```{r}
+Pc_genos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos + Genos") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
