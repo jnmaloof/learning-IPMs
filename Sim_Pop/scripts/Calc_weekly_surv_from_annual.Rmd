@@ -1,0 +1,72 @@
+---
+title: "Test_surv_modeling"
+author: "Julin Maloof"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+If we have a yearly survival probablility how can we model weekly survival?
+
+Start with simple: apportion the yearly probability by the total number of weeks and model for each week.
+
+```{r}
+library(tidyverse)
+```
+
+Will set up a simple simulated population
+```{r}
+individuals <- 10000
+weeks <- 20
+avg.surv.prob <- 0.4
+
+# data table with indiviuals
+data <- tibble(
+  ID = 1:individuals,
+  
+  # introduce some random variation per individual in their survival rate.
+  cum.surv.prob = rnorm(individuals, mean = avg.surv.prob, sd = 0.05),
+  
+  # apportion the seasonal survival probability across weeks.
+  weekly.surv.prob = cum.surv.prob^(1/weeks)
+  
+) %>%
+  # create a row for each week
+  expand_grid(week=1:weeks)
+```
+
+Assign survival or death based on probabilities for each week.
+```{r}
+set.seed(123)
+data <- data %>%
+  
+  # did a plant live or die?
+  mutate(alive = rbinom(n(), size = 1, prob = weekly.surv.prob)) %>%
+  
+  # one a plant is dead it needs to stay dead.  This make sure that is true.
+  group_by(ID) %>%
+  mutate(alive = cummin(alive)) %>% # if dead in a previous week, stay dead
+  ungroup()
+```
+
+summarize
+```{r}
+data.summary <- data %>%
+  group_by(ID) %>%
+  summarize(actual.surv = min(alive), # this ends up being 1 if it lived from the season and 0 if it died.
+            cum.surv.prob = unique(cum.surv.prob)) # grab the assigned survival probability for each plant
+
+data.summary
+```
+
+```{r}
+mean(data.summary$actual.surv)
+```
+
+```{r}
+mean(data.summary$cum.surv.prob)
+```
+
