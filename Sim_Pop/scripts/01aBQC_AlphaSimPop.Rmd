@@ -4,7 +4,7 @@ author: "Julin Maloof"
 date: "`r Sys.Date()`"
 output: html_document
 ---
-This script is from Brandie
+This script is from Brandie.  I modified it to appropriately calculate weekly survival
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -16,7 +16,7 @@ Rishav demoed AlphaSimR:
 <https://cran.r-project.org/web/packages/AlphaSimR/index.html>
 
 -   Rishav's demo is on his GitHub:
-    <https://github.com/rishavray/IPM_practice/blob/main/IPM_genetic_simulation.Rmd>
+<https://github.com/rishavray/IPM_practice/blob/main/IPM_genetic_simulation.Rmd>
 
 ## Libraries
 
@@ -67,11 +67,11 @@ traitMeans <- c(germination.logit = logit(0.18), #logit to scale it (from gene -
                 fruitPerPlant = 30)
 
 SP$addTraitA(nQtlPerChr = 10, 
-              mean = traitMeans, 
-              var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
-              gamma = TRUE, #a lot of small effect loci and a few large effect loci 
-              shape = 1, #shape parameter for gamma distribution 
-              name=names(traitMeans))
+             mean = traitMeans, 
+             var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
+             gamma = TRUE, #a lot of small effect loci and a few large effect loci 
+             shape = 1, #shape parameter for gamma distribution 
+             name=names(traitMeans))
 #addTraitAG - Randomly assigns eligible QTLs for one or more additive GxE traits. If simulating more than one trait, all traits will be pleiotropic with correlated effects.
 #addTraitA - Randomly assigns eligible QTLs for one or more additive traits. If simulating more than one trait, all traits will be pleiotropic with correlated additive effects. (we will keep it simple for now)
 ##nQtlPerChr = number of QTLs per chromosome. Can be a single value or nChr values.
@@ -100,7 +100,7 @@ head(pheno)
 ```{r}
 pheno <- pheno %>%
   mutate(across(ends_with(".logit"), .fns = inv_logit, 
-         .names = "{.col}.prob")) %>%
+                .names = "{.col}.prob")) %>%
   rename_with(.fn = \(n) str_replace(n, "\\.logit\\.prob", "\\.prob")) %>%
   mutate(germinated = rbinom(n(), size=1, prob=germination.prob),
          established = ifelse(germinated, rbinom(n(), size=1, prob=establishment.prob), NA),
@@ -119,25 +119,6 @@ pheno %>%
   facet_wrap(~name, scales="free")
 ```
 
-## Equation for survival 
-Cox hazard equation doesn't really work 
-```{r}
-cox_hazaard <- function (t, h, beta1, x1) {
-  result <- h - exp(beta1*x1)
-  return(result)
-}
-
-##Example:
-surv <- tibble(week = seq(0,12, 1)) %>%
-  mutate(wksurv = cox_hazaard(t = week,
-                          h = 40, #baseline hazard (value of the hazard when no covariates)
-                          beta1 = 0.5, #beta = impact of (i.e. effect size) of covariates (in this case covariate 1)
-                          x1 = 0)) #x1 - one of p covariates 
-
-surv %>%  ggplot(aes(x=week, y=wksurv)) +
-  geom_line()
-```
-
 ## Try to get weekly growth data
 
 ### Model growth with the Weibull model
@@ -151,10 +132,10 @@ weibull <- function (t, alpha, beta, k, delta) {
 ##Example:
 growth <- tibble(week = seq(0,12, 1)) %>%
   mutate(size = weibull(t = week,
-                          alpha = 40, #Hmax = alpha -  Sets the asymptote (max growth)
-                          beta = 0.5, #Hmin = beta - Changes the y intercept (the lower limit)
-                          k = 0.01, #k - Often described as the growth rate --\> related to the slope of the line
-                          delta = 0.5)) #delta - Sets the inflection point - when you shift b/t concave to convex
+                        alpha = 40, #Hmax = alpha -  Sets the asymptote (max growth)
+                        beta = 0.5, #Hmin = beta - Changes the y intercept (the lower limit)
+                        k = 0.01, #k - Often described as the growth rate --\> related to the slope of the line
+                        delta = 0.5)) #delta - Sets the inflection point - when you shift b/t concave to convex
 
 growth %>%  ggplot(aes(x=week, y=size)) +
   geom_line()
@@ -162,19 +143,26 @@ growth %>%  ggplot(aes(x=week, y=size)) +
 
 ### Pheno weekly
 ```{r}
+weeks <- 12
 pheno_weekly <- pheno %>% 
   mutate(Indiv_ID=row_number()) %>% 
-  slice(rep(1:n(), each = 12)) %>% #duplicate each row 12 times 
+  slice(rep(1:n(), each = weeks)) %>% #duplicate each row 12 times 
   group_by(Indiv_ID) %>% 
   mutate(week=row_number(), #12 weeks for each indiv
          week_next=lead(week, order_by = week), 
          elapsed_weeks= week_next - week, #interval length in weeks
          size = if_else(week==1, beta, #size in week 1 is the min size (beta)
                         weibull(t = week, #otherwise use the weibull formula to calculate size
-                        alpha = 40,
-                        beta = beta,
-                        k = k, 
-                        delta = 0.5)))
+                                alpha = 40,
+                                beta = beta,
+                                k = k, 
+                                delta = 0.5))) %>%
+  
+  #weekly survival
+  mutate(weekly.surv.prob = y1surv.prob^(1/weeks),
+         alive = rbinom(n(), size = 1, prob = weekly.surv.prob), #stay alive this week?
+         alive = cummin(alive)) %>% # if dead in a previous week, stay dead
+  ungroup()
 pheno_weekly
 ```
 
@@ -182,17 +170,17 @@ pheno_weekly
 ```{r}
 # Extract genotype scores for each individual
 genotype_scores <- pop1@gv %>%
-    as_tibble() %>%
-    rownames_to_column(var = "Indiv_ID") %>%
-    mutate(Indiv_ID = as.integer(Indiv_ID)) %>%
-    select(Indiv_ID, everything())
+  as_tibble() %>%
+  rownames_to_column(var = "Indiv_ID") %>%
+  mutate(Indiv_ID = as.integer(Indiv_ID)) %>%
+  select(Indiv_ID, everything())
 
 # Join genotype scores with phenotypic data
 pheno_weekly_merged <- pheno_weekly %>%
-    left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno"))
+  left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno"))
 
 pheno_weekly_merged %>% 
-select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
+  select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
 
-write_csv(pheno_weekly_merged, "../output/PopSim_Phenos-Genos_v3.csv")
+write_csv(pheno_weekly_merged, "../output/PopSim_Phenos-Genos_v4.csv")
 ```
