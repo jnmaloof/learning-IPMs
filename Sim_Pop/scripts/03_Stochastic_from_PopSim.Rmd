@@ -1,0 +1,668 @@
+---
+title: "Stochastic_from_PopSim"
+author: "Julin Maloof and Brandie QC"
+date: "`r Sys.Date()`"
+output: 
+  html_document: 
+    keep_md: true
+---
+
+I am modifying Brandie's script to work on stochastic simulations (as an alternative to the matrices)
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# IPM from Population Simulation
+
+\*Simulations done in "Population_Sim_Trial.Rmd" file (currently using AlphaSimR)
+
+**Goal:** Compare predictions created from just phenotypes from the simulation to predictions created from phenotypes + genotype scores.
+
+Plan is to use stochastic simulations, rather than matrix methods, to calculate lambda, etc.
+
+* create a germination model
+* create an establishment model
+* create a growth model
+* create a survival model
+* create a reproduction model
+Do the above in brms so that it is easier to account for variance when doing predctions
+
+For simulations, 
+* start with 1000 individuals and run through each model in turn, weeding out as we go.
+* for next generation, figure out GV from mid-parent.
+
+TODO:
+* Add size dependence for traits in simulations
+
+## Libraries
+
+```{r}
+library(tidyverse)
+library(brms)
+library(broom)
+library(broom.mixed)
+library(magrittr)
+library(lmerTest)
+# commented these outs becuase it was flagging a ton in brms and if I don't use it at all it doesn't check.
+# conflicted::conflicts_prefer(lmerTest::lmer)
+# conflicted::conflicts_prefer(dplyr::filter)
+# conflicted::conflicts_prefer(dplyr::mutate)
+# conflicted::conflicts_prefer(brms::ar)
+# conflicted::conflicts_prefer(Matrix::expand)
+```
+
+## Load the data
+```{r}
+simpop <- read_csv("../output/PopSim_Phenos-Genos_v4.csv")
+names(simpop)
+#logit_pheno = scaled probability/phenotype
+#_geno = genotype score for that trait 
+#size = height calculated from simulated Weibull parameters (alpha, beta, k, and delta)
+####Note: we will use the genotype score for k for this 
+#elapsed_weeks = interval between weeks - should all be 1 in this data
+```
+
+### Add size next
+```{r}
+unique(simpop$established) #NA = did not germinate, 1 = established (survived first 3 weeks in field); 0 = did not establish
+unique(simpop$y1surv) #NA = did not establish, 1 = survived to week 12; 0 = did not survive 
+#simpop %>% select(Indiv_ID, germinated, established, y1surv, k_pheno, week, size) %>% filter(Indiv_ID<5)
+
+simpop_timeprep <- simpop %>%
+  mutate(weeks = as.numeric(week - 1), #Weeks since week 1 (equivalent to pre-transplant or initial size) 
+         size = if_else(germinated==0, NA, size) #no size if no germ
+  ) %>%   
+  group_by(Indiv_ID) %>% 
+  mutate(death.week=if_else(y1surv==1, NA, #if survive year 1 no death week 
+                            first(week, order_by = alive)) #first week where surv = 0 
+  ) %>% 
+  
+  mutate(size_next = lead(size, order_by = week), #next time point's size) 
+         size = if_else(is.na(death.week), size,
+                        if_else(week>death.week, NA, size)),
+         alive_next = lead(alive, order_by = week, default=min(alive))) %>%  
+  ungroup() %>% 
+  mutate(size_next=if_else(alive==0, NA, size_next))
+
+simpop_timeprep %>% #look at data for a few indivs to see if above worked
+  drop_na(alive) %>% 
+  select(Indiv_ID, week, weeks, germinated, established, y1surv, size, size_next, alive, death.week) %>% 
+  filter(Indiv_ID<25)
+
+simpop_timeprep_germ <- simpop_timeprep %>% filter(week==1) %>% select(Indiv_ID, germinated, germination.logit_geno)
+simpop_timeprep_estab <- simpop_timeprep %>% filter(week==3, germinated==1) %>% select(Indiv_ID, germinated, established, establishment.logit_geno)
+
+simpop_timeprep_surv <- simpop_timeprep %>% drop_na(alive_next, size) %>% filter(week > 3, established==1) %>% select(Indiv_ID, week, established, alive_next, size, size.scale, weekly.surv.prob, y1surv.logit_geno, y1surv.prob, y1surv.prob) %>% mutate(y1surv.logit_geno.scale = scale(y1surv.logit_geno)) #for surv models 
+simpop_timeprep_size <- simpop_timeprep %>% drop_na(size, size_next) #for size models 
+```
+
+### Scaling and transformations
+```{r}
+simpop_timeprep_surv %>%  #slightly skewed
+  ggplot(aes(x=size)) +
+  geom_histogram()
+
+simpop_timeprep_surv_scaled <- simpop_timeprep_surv %>% 
+  mutate(logSize=log(size),
+         sqSize=sqrt(size)) 
+
+simpop_timeprep_surv_scaled %>% #not better
+  ggplot(aes(x=logSize)) +
+  geom_histogram()
+
+simpop_timeprep_surv_scaled %>% #not better
+  ggplot(aes(x=sqSize)) +
+  geom_histogram()
+```
+
+## germination model
+
+```{r}
+germ.model.pheno.glm <- glm(germinated ~ 1, family = binomial(), data = simpop_timeprep_germ)
+summary(germ.model.pheno.glm)
+germ.model.geno.glm <- glm(germinated ~ scale(germination.logit_geno), family = binomial, data = simpop_timeprep_germ)
+summary(germ.model.geno.glm)
+```
+
+#### brms
+
+```{r}
+germ.model.pheno.brms <- brm(germinated ~ 1, 
+                             family = bernoulli(), data = simpop_timeprep_germ,
+                             refresh = 0)
+summary(germ.model.pheno.brms)
+
+germ.model.geno.brms <- brm(germinated ~ 1 + scale(germination.logit_geno),
+                            prior = set_prior("normal(0, 2)", class = "b"),
+                            family = bernoulli(), data = simpop_timeprep_germ,
+                            refresh = 0)
+summary(germ.model.geno.brms)
+```
+
+
+```{r}
+germ.predict.df <- simpop_timeprep_germ %>%
+  mutate(pheno.glm = predict(germ.model.pheno.glm, type = "response"),
+         geno.glm = predict(germ.model.geno.glm, type = "response" ),
+         pheno.brm = predict(germ.model.pheno.brms, type = "response")[,"Estimate"],
+         geno.brm = predict(germ.model.geno.brms, type = "response")[,"Estimate"]
+  )
+
+germ.predict.df
+```
+```{r}
+germ.predict.df %>%
+  mutate(germination.logit_geno_scale = scale(germination.logit_geno)) %>%
+  pivot_longer(cols = pheno.glm:geno.brm) %>%
+  ggplot(aes(x=germination.logit_geno_scale, y = value, color = name)) +
+  geom_point() +
+  facet_wrap(~ name)
+```
+
+predict actual germination and compare to the observed data
+
+```{r}
+germ.predict.df <- germ.predict.df %>%
+  rename(germinated.obs = germinated) %>%
+  mutate(germinated.pred.brm = rbinom(n(), 1, geno.brm),
+         germinated.pred.glm = rbinom(n(), 1, geno.glm),
+         germinated.prob.orig = inv_logit_scaled(germination.logit_geno))
+
+# observed vs modeled genotype
+germ.predict.df %>%
+  ggplot(aes(x=germinated.prob.orig, y = geno.brm)) +
+  geom_point()
+
+# germination or predicted germination as a function of original genotype
+germ.predict.df %>%
+  pivot_longer(c(germinated.obs, germinated.pred.brm),
+               names_prefix = "germinated.", 
+               values_to = "germinated",
+               names_to = "data_source") %>%
+  ggplot(aes(x=germinated.prob.orig, y = germinated, color = data_source)) +
+  geom_point(position = position_jitter(width = 0, height = .1), alpha = 0.5) +
+  geom_smooth()
+```
+
+Variance for original and predicted data
+```{r}
+# Calculate binned variance 
+germ.predict.df %>%
+  mutate(x_bins = cut(germinated.prob.orig, breaks = 15)) %>%  # Create bins
+  pivot_longer(c(germinated.obs, germinated.pred.brm, germinated.pred.glm),
+               names_prefix = "germinated.", 
+               values_to = "germinated",
+               names_to = "data_source") %>%
+  group_by(x_bins, data_source) %>%
+  summarise(
+    mean_y = mean(germinated),
+    var_y = var(germinated),
+    dispersion_index = var_y / mean_y,
+    n = n(),
+    x_midpoint = mean(germinated.prob.orig),
+    .groups = 'drop'
+  ) %>%
+  ggplot(aes(x = x_midpoint, y = dispersion_index, color=data_source)) +
+  geom_point(aes(size = n)) +
+  geom_smooth(method = "loess", se = TRUE) +
+  labs(x = "germinated.prob.geno.orig", 
+       y = "Variance",
+       title = "Variance as Function of Geno Germ Prob") +
+  theme_minimal() +
+  scale_color_viridis_d()
+
+```
+
+
+## Estab models
+
+```{r}
+estab.model.pheno.brms <- brm(established ~ 1, 
+                              family = bernoulli(), data = simpop_timeprep_estab,
+                              refresh = 0)
+summary(estab.model.pheno.brms)
+
+estab.model.geno.brms <- brm(established ~ 1 + scale(establishment.logit_geno),
+                             prior = set_prior("normal(0, 2)", class = "b"),
+                             family = bernoulli(), data = simpop_timeprep_estab,
+                             refresh = 0)
+
+plot(estab.model.geno.brms, ask=FALSE)
+summary(estab.model.geno.brms)
+```
+
+## Survival Models
+
+### Phenos Only
+```{r}
+surv.model.pheno.brms <- brm(alive_next ~ size.scale  + (1|Indiv_ID), # + I(size.scale^2),
+                             prior = set_prior("normal(0, 10)", class = "b"),
+                             family = bernoulli(), data = simpop_timeprep_surv, 
+                             cores = 4, refresh =0)
+
+plot(surv.model.pheno.brms, ask = FALSE)
+summary(surv.model.pheno.brms)
+```
+
+
+```{r}
+surv.model.geno.brms <- brm(alive_next ~ size.scale  + y1surv.logit_geno.scale + (1|Indiv_ID), #, + I(size.scale^2)
+                            prior = set_prior("normal(0, 2)", class = "b"),
+                            family = bernoulli(), 
+                            data = simpop_timeprep_surv,
+                            cores = 4,
+                            refresh = 0,
+                            control = list(adapt_delta=.95))
+
+plot(surv.model.geno.brms, ask=FALSE)
+summary(surv.model.geno.brms)
+```
+
+
+## Growth Models
+
+Should these be Weibull instead of size_next models?
+
+### Observed Patterns
+```{r}
+simpop_timeprep_size %>% 
+  ggplot(aes(x=size, y=size_next)) +
+  geom_point()  +
+  geom_abline() +
+  geom_smooth(method = "lm")
+```
+
+
+### Phenos Only
+
+```{r}
+size.model.pheno.brms <- brm(size_next ~ 0 + size + weeks + (0 + size_next|Indiv_ID),
+                             prior = set_prior("normal(0, 2)", class = "b"),
+                             data = simpop_timeprep_size,
+                             cores = 4,
+                             iter = 4000,
+                             refresh = 0)
+
+summary(size.model.pheno.brms)
+
+plot(size.model.pheno.brms, ask = FALSE)
+
+pairs(size.model.pheno.brms)
+```
+
+### Geno
+should also test without weeks.
+```{r}
+size.model.geno.brms <- brm(size_next ~ 0 + size + weeks + scale(k_geno) + (0 + size_next|Indiv_ID), 
+                            prior = set_prior("normal(0, 2)", class = "b"),
+                            data = simpop_timeprep_size,
+                            cores = 4, 
+                            refresh = 0)
+
+summary(size.model.geno.brms)
+
+plot(size.model.geno.brms, ask = FALSE)
+```
+
+## Try Stocahstic modeling for a P matrix.
+
+* For this scenario we assume:
+* Everyone that survived until the end reproduced
+* Mating is Random
+* Fecundity is equal
+* Genotype scores are additive
+* Population size is constant at 2000 seeds
+
+Steps:
+1. Make kernel models based on 1 generation of data (this is what we did above)
+2. Calculate Genotypes of next generation based on survivors
+3. Predict phenotypes of next generation
+4. Repeat
+
+### mating and next generation
+```{r}
+pop <- simpop
+calc.geno <- function(pop, size = 2000) {
+  pop <- pop %>% filter(y1surv==1, week==1) %>% # week doesn't matter but need to reduce to 1 row per individual 
+    select(ends_with("geno"))
+  pop1 <- tibble(Indiv_ID=1:size) %>%
+    mutate(genos = map(Indiv_ID, \(x) {slice_sample(pop, n = 2)  %>% # get two parents
+        summarize(across( .cols = everything(), .fns = mean))})) %>% # average the genotype scores
+    unnest(genos)
+  pop1
+}
+```
+
+### prediction of phenotypes
+```{r}
+calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.geno.brms, m.estab = estab.model.geno.brms, m.size = size.model.geno.brms, m.surv=surv.model.geno.brms) {
+  pred <- pop %>%
+    
+    # germination, establishment, beta (initial size)
+    mutate(
+      germination = { predict(m.germ, newdata = pick(Indiv_ID, germination.logit_geno))[,"Estimate"] %>%
+          rbinom(n=n(), size = 1, prob = .)
+      },
+      
+      establishment = 
+        ifelse(germination, 
+               { predict(m.estab, newdata = pick(Indiv_ID, establishment.logit_geno))[, "Estimate"] %>%
+                   rbinom(n=n(), size = 1, prob = .)},
+               NA), # if no germination, no establishment
+      
+      # need to create predictive function for this, but in the meantime...
+      beta =  ifelse(germination, 
+                     rnorm(n = n(), mean=beta_geno, sd = 1.75),
+                     NA),
+      beta = ifelse(beta < 0, min(beta[beta>0], na.rm = TRUE), beta)
+    )
+  
+  # weekly phenotypes: growth and survival
+  slice(rep(1:n(), each = weeks)) %>% #duplicate each row 12 times 
+    group_by(Indiv_ID) %>% 
+    mutate(week=row_number(), #12 weeks for each indiv
+           week_next=lead(week, order_by = week), 
+           elapsed_weeks= week_next - week, #interval length in weeks
+           size = if_else(germinated==1 & week==1,
+                                  beta, #size in week 1 is the min size (beta)
+                          NA)) %>% # didn't germinate or not week 1) 
+    group_by(week) %>%
+    
+    mutate(size_next = if_else(established==1,
+                               predict(m.size, newdata = pick(Indiv_ID, k_geno, week, size)),
+                               NA) # didn't germinate
+    ) %>%
+    ungroup() %>%
+    mutate(size.scale = as.numeric(scale(size, scale = diff(range(size, na.rm = TRUE))))) %>% # could also try traditional scaling, but this gives range of -1 to +1
+
+    
+    I AM HERE I AM HERE
+    
+    #weekly survival
+    mutate(weekly.surv.prob = weekly_surv(pick(size.scale, y1surv.prob, week, established), weeks, estab_weeks), 
+           alive = ifelse(established, rbinom(n(), size = 1, prob = weekly.surv.prob), established), #stay alive this week?
+           alive = cummin(alive),  # if dead in a previous week, stay dead
+           y1surv = min(alive))
+  
+  
+  
+  
+}
+```
+
+
+# old code below 
+
+## P Matrix
+
+### Make a dataframe to store the parameters
+```{r}
+params=data.frame(
+  surv.int=NA, # Intercept from logistic regression of survival
+  surv.slope1=NA, # Slope from logistic regression of survival
+  surv.slope2=NA, # Quadratic slope from logistic regression of survival
+  growth.int=NA, # Intercept from linear regression of growth
+  growth.slope1=NA, # Slope from linear regression of growth
+  growth.slope2=NA, # Quadratic slope from linear regression of growth
+  growth.sd=NA # Residual sd from the linear regression of growth
+)
+
+params_phenos <- params
+params_genos <- params
+```
+
+### Use broom:tidy to create a df with the coef from each model
+```{r}
+surv.coefs_pheno <- surv.models_pheno %>% 
+  filter(name == "3a_quadratic_size") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_phenos$surv.int <- surv.coefs_pheno %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_phenos$surv.slope1 <- surv.coefs_pheno %>% filter(term == "size") %>% pull(estimate)
+params_phenos$surv.slope2 <- surv.coefs_pheno %>% filter(term == "I(size^2)") %>% pull(estimate)
+```
+
+```{r}
+surv.coefs_genos <- surv.models_genos %>% 
+  filter(name == "3c_quadratic_size_weeks_geno") %>%
+  mutate(coefs = map(glm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_genos$surv.int <- surv.coefs_genos %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_genos$surv.slope1 <- surv.coefs_genos %>% filter(term == "size") %>% pull(estimate)
+params_genos$surv.slope2 <- surv.coefs_genos %>% filter(term == "I(size^2)") %>% pull(estimate)
+```
+
+```{r}
+growth.coefs_pheno <- size.models_pheno %>% 
+  filter(name == "3b_quadratic_size_weeks") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_phenos$growth.int <- growth.coefs_pheno %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_phenos$growth.slope1 <- growth.coefs_pheno %>% filter(term == "size") %>% pull(estimate)
+params_phenos$growth.slope2 <- growth.coefs_pheno %>% filter(term == "I(size^2)") %>% pull(estimate)
+
+#Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
+params_phenos$growth.sd <- size.models_pheno %>% filter(name == "3b_quadratic_size_weeks") %>% unnest(glance) %>% pull(sigma)
+```
+
+```{r}
+growth.coefs_genos <- size.models_genos %>% 
+  filter(name == "3c_quadratic_size_weeks_geno") %>% 
+  mutate(coefs = map(lm, tidy)) %>% 
+  select(name, f, coefs) %>% 
+  unnest(coefs) 
+
+params_genos$growth.int <- growth.coefs_genos %>% filter(term == "(Intercept)") %>% pull(estimate)
+params_genos$growth.slope1 <- growth.coefs_genos %>% filter(term == "size") %>% pull(estimate)
+params_genos$growth.slope2 <- growth.coefs_genos %>% filter(term == "I(size^2)") %>% pull(estimate)
+
+#Pull sigma which is the _modeled_ standard deviation of the residuals.  Merow uses observed sd of residuals.  
+params_genos$growth.sd <- size.models_genos %>% filter(name == "3c_quadratic_size_weeks_geno") %>% unnest(glance) %>% pull(sigma)
+```
+
+### Define the functions
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x_phenos=function(x,params_phenos) {
+  u=exp(params_phenos$surv.int + params_phenos$surv.slope1*x + params_phenos$surv.slope2*x^2)
+  return(u/(1+u)) 
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+g.yx_phenos=function(xp,x,params_phenos) {
+  dnorm(xp,mean=params_phenos$growth.int + params_phenos$growth.slope1*x + params_phenos$growth.slope2*x^2, sd=params_phenos$growth.sd)
+}
+```
+
+```{r}
+# 1. survival probability function
+##This is inverse logit.  Provides survival probability based on size.
+s.x_genos=function(x,params_genos) {
+  u=exp(params_genos$surv.int + params_genos$surv.slope1*x + params_genos$surv.slope2*x^2)
+  return(u/(1+u)) 
+}
+
+# 2. growth function
+## Return a probability distribution of new sizes at t+1 (xp) at a given size x.  
+g.yx_genos=function(xp,x,params_genos) {
+  dnorm(xp,mean=params_genos$growth.int + params_genos$growth.slope1*x + params_genos$growth.slope2*x^2, sd=params_genos$growth.sd)
+}
+```
+
+### Define the structure of the IPM
+```{r}
+# the sizes we are integrating over
+minSize<-min(simpop_timeprep$size,na.rm=T) 
+maxSize<-max(simpop_timeprep$size,na.rm=T) 
+
+n=100 # dimensions of the matrix 
+
+b=minSize+c(0:n)*(maxSize-minSize)/n # boundary points
+y=0.5*(b[1:n]+b[2:(n+1)]) # mesh points
+h=y[2]-y[1] # step size
+```
+
+### Make the matrices (G, S, and P)
+```{r}
+G_phenos=h*outer(y,y,g.yx_phenos,params=params_phenos) # growth matrix
+
+S_phenos=s.x_phenos(y,params=params_phenos) # survival at each size midpoint
+
+P_phenos=G_phenos # placeholder; redefine P on the next line
+for(i in 1:n) P_phenos[,i]=G_phenos[,i]*S_phenos[i] # growth/survival matrix
+```
+
+```{r}
+G_genos=h*outer(y,y,g.yx_genos,params=params_genos) # growth matrix
+
+S_genos=s.x_genos(y,params=params_genos) # survival at each size midpoint
+
+P_genos=G_genos # placeholder; redefine P on the next line
+for(i in 1:n) P_genos[,i]=G_genos[,i]*S_genos[i] # growth/survival matrix
+```
+
+### Plot the matrix
+```{r}
+P_phenos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos Only") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+```{r}
+P_genos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos + Genos") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+### Check for eviction
+```{r}
+plot(y,s.x_phenos(y,params_phenos), #fitted survival model 
+     xlab="Size",type="l",
+     ylab="Survival Probability",lwd=12)
+points(y,apply(P_phenos,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
+#some eviction at larger sizes
+```
+```{r}
+plot(y,s.x_genos(y,params_genos), #fitted survival model 
+     xlab="Size",type="l",
+     ylab="Survival Probability",lwd=12)
+points(y,apply(P_genos,2,sum),col="red",lwd=3,cex=.1,pch=19) # column sums 
+#some eviction at larger sizes
+```
+#### Eviction correction using a constant 
+```{r}
+Pc_phenos=G_phenos # placeholder; redefine P on the next line
+for(i in 1:n) Pc_phenos[,i]=G_phenos[,i]*S_phenos[i] # growth/survival matrix
+nvals <- colSums(Pc_phenos, na.rm = TRUE)
+Pc_phenos <- t((t(Pc_phenos)/nvals) * s.x_phenos(y, params=params_phenos))
+
+plot(y,s.x_phenos(y,params_phenos),xlab="Size",type="l",
+     ylab="Survival Probability",lwd=12)
+points(y,apply(Pc_phenos,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+```{r}
+Pc_genos=G_genos # placeholder; redefine P on the next line
+for(i in 1:n) Pc_genos[,i]=G_genos[,i]*S_genos[i] # growth/survival matrix
+nvals <- colSums(Pc_genos, na.rm = TRUE)
+Pc_genos <- t((t(Pc_genos)/nvals) * s.x_genos(y, params=params_genos))
+
+plot(y,s.x_genos(y,params_genos),xlab="Size",type="l",
+     ylab="Survival Probability",lwd=12)
+points(y,apply(Pc_genos,2,sum),col="red",lwd=3,cex=.1,pch=19) # solution worked
+```
+
+#### Plot corrected P matrices 
+```{r}
+Pc_phenos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos Only") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+
+```{r}
+Pc_genos %>% as_tibble() %>%
+  set_colnames(y) %>% #column names = each size mesh point 
+  mutate(size.t1=y) %>%
+  pivot_longer(-size.t1, names_to = "size.t", names_transform = as.numeric) %>%
+  ggplot(aes(x=size.t, y = size.t1)) +
+  geom_raster(aes(fill = value)) + #basic contour with fill determined by the growth*surv value 
+  geom_contour(aes(z = value),lwd=.25) + #adds contour lines 
+  geom_abline(intercept=0, slope = 1, color="gray90", lty=5) + #add 1:1 line 
+  scale_fill_viridis_c(option = "plasma") + #change contour colors 
+  labs(x = "Size (t)", y = "Size (t + 1)", title = "P Matrix: Phenos + Genos") +
+  coord_equal() + #make it a square plot 
+  theme_bw()
+```
+## Asymptotic Lambda Comparison
+```{r}
+(lam_pheno = Re(eigen(Pc_phenos)$values[1]))  #0.9889141
+(lam_geno = Re(eigen(Pc_genos)$values[1]))  #0.9097057
+#lambda slightly lower with genotypes added 
+#both just below 1 (population growth)
+```
+
+## Sensitivities Comparison
+```{r}
+#prep:
+w.eigen_pheno <- Re(eigen(Pc_phenos)$vectors[,1]) #right eigenvector
+stable.dist_pheno <- w.eigen_pheno/sum(w.eigen_pheno)
+v.eigen_pheno <- Re(eigen(t(Pc_phenos))$vectors[,1]) #left eigenvector 
+repro.val_pheno <- v.eigen_pheno/v.eigen_pheno[1]
+
+w.eigen_geno <- Re(eigen(Pc_genos)$vectors[,1]) #right eigenvector
+stable.dist_geno <- w.eigen_geno/sum(w.eigen_geno)
+v.eigen_geno <- Re(eigen(t(Pc_genos))$vectors[,1]) #left eigenvector 
+repro.val_geno <- v.eigen_geno/v.eigen_geno[1]
+
+#combine eigens to get sensitivity and elasticity matrices
+v.dot.w_pheno = sum(stable.dist_pheno*repro.val_pheno)*h
+sens_pheno = outer(repro.val_pheno,stable.dist_pheno)/v.dot.w_pheno
+elas_pheno = matrix(as.vector(sens_pheno)*as.vector(Pc_phenos)/lam_pheno,nrow=n)
+
+v.dot.w_geno = sum(stable.dist_geno*repro.val_geno)*h
+sens_geno = outer(repro.val_geno,stable.dist_geno)/v.dot.w_geno
+elas_geno = matrix(as.vector(sens_geno)*as.vector(Pc_genos)/lam_geno,nrow=n)
+
+sens_pheno
+sens_geno
+#sensitivities are different 
+
+elas_pheno
+elas_geno 
+#elasticities are different 
+```
+

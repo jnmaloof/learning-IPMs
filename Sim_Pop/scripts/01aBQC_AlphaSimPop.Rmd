@@ -31,7 +31,7 @@ inv_logit <- brms::inv_logit_scaled
 
 ```{r}
 founderPop = runMacs(
-  nInd = 1000, #number of individuals to simulate 
+  nInd = 2000, #number of individuals to simulate 
   nChr = 10, #number of chromosomes to simulate - may not be important to match to Streps' 14
   segSites = NULL, #number of segregating sites to keep per chromosome.
   species = "GENERIC" #The GENERIC history is meant to be a reasonable all-purpose choice. It runs quickly and models a population with an effective populations size that has gone through several historic bottlenecks.
@@ -61,14 +61,21 @@ traitMeans <- c(germination.logit = logit(0.18), #logit to scale it (from gene -
                 y1surv.logit = logit(0.45),
                 #alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
                 beta = 7, #Hmin = beta -Changes the y intercept (the lower limit) for the Weibull model- recruit size?
-                k = 0.01, #Often described as the growth rate --\> related to the slope of the line for the Weibull model 
+                k100 = 1, # Divide by 100 to get K.  Often described as the growth rate --\> related to the slope of the line for the Weibull model 
                 #delta = 0.5, #Sets the inflection point - when you shift b/t concave to convex for the Weibull model 
                 flowering.logit = logit(0.25),
                 fruitPerPlant = 30)
 
 SP$addTraitA(nQtlPerChr = 10, 
              mean = traitMeans, 
-             var = (traitMeans*0.25)^2, #genetic CV = 0.25 (?)
+             var = (traitMeans*c(germination.logit=1,
+                                 establishment.logit=2,
+                                 y1surv.logit=6,
+                                 beta=0.25,
+                                 k100 = 1,
+                                 flowering.logit=1.5,
+                                 fruitPerPlant=.3))^2, #genetic Var.  Numbers are multipliers of the trait means
+             
              gamma = TRUE, #a lot of small effect loci and a few large effect loci 
              shape = 1, #shape parameter for gamma distribution 
              name=names(traitMeans))
@@ -80,7 +87,7 @@ SP$addTraitA(nQtlPerChr = 10,
 ##varGxE = a vector of total genotype-by-environment variances for the traits
 ##name = optional name for trait(s)
 
-SP$setVarE(h2=rep(0.5, length(traitMeans))) #set heritability to 0.5 
+SP$setVarE(h2=rep(0.7, length(traitMeans))) #set heritability 
 ```
 
 ## Create Initial Population
@@ -96,7 +103,7 @@ dim(pheno)
 head(pheno)
 ```
 
-### Convert pheno logits to probabilities and phenotypes
+### Convert pheno logits to probabilities and phenotypes for early traits
 ```{r}
 pheno <- pheno %>%
   mutate(across(ends_with(".logit"), .fns = inv_logit, 
@@ -105,10 +112,12 @@ pheno <- pheno %>%
   mutate(germinated = rbinom(n(), size=1, prob=germination.prob),
          established = ifelse(germinated, rbinom(n(), size=1, prob=establishment.prob), NA),
          beta,
+         k = k100/100,
+         k = ifelse(k <=0, min(k[k>0], na.rm = TRUE), k), # no negative k
          k = ifelse(established, k, NA), #can only have a growth rate if you establish
-         y1surv = ifelse(established, rbinom(n(), size =1, prob=y1surv.prob), NA),
-         flowered = ifelse(established, rbinom(n(), size = 1, prob = flowering.prob), NA),
-         fruitPerPlant = ifelse(flowered, fruitPerPlant, NA))
+         beta = ifelse(beta <=0, min(beta[beta>0], na.rm = TRUE), beta), # no negative k
+
+) %>% select(-k100)
 ```
 
 ```{r}
@@ -141,9 +150,48 @@ growth %>%  ggplot(aes(x=week, y=size)) +
   geom_line()
 ```
 
+```{r}
+#testing a weekly survival function that includes size
+y1surv.prob <- 0.4
+weeks <- 12
+estab_weeks <- 3
+size.prop <- 0.2
+size2.prop <- 0.05 # quadratic
+size <- seq(1, 20, length.out=weeks )
+size.scale <- scale(size[(estab_weeks+1):weeks  ], scale=diff(range(size))) %>% as.numeric
+size.scale2 <- size.scale^2
+week <- seq(1:weeks)
+established <- 1
+
+x <- y1surv.prob^(1/(weeks-estab_weeks)) + # basic weekly survival
+  (size.prop * size.scale + size2.prop * size.scale2) *  # the proportion of the growth rate is affected by size
+  y1surv.prob^(1/(weeks-estab_weeks)) # scaling the size adjustment to the surv.prob scale
+
+x
+
+prod(x)
+```
+
+
 ### Pheno weekly
 ```{r}
+weekly_surv <- function(d, weeks, estab_weeks, size.coef=.25, size2.coef=0) {
+  # function to calculate weekly survival as a function of
+  # year1 survival and size
+  d %>%
+    mutate(weekly.surv.prob = ifelse(week <= estab_weeks, established,
+                                     min(1, # make sure it is not > 1
+                                     y1surv.prob^(1/(weeks-estab_weeks)) + # basic weekly survival
+                                       (size.coef * size.scale + size2.coef * size.scale^2) #*  # the proportion of the growth rate is affected by size
+                                       #y1surv.prob^(1/(weeks-estab_weeks))  # scaling the size adjustment to the surv.prob scale
+                                     ) # min
+                                     ) #ifelse
+           ) %>% # mutate 
+           pull(weekly.surv.prob)
+}
+
 weeks <- 12
+estab_weeks <- 3
 pheno_weekly <- pheno %>% 
   mutate(Indiv_ID=row_number()) %>% 
   slice(rep(1:n(), each = weeks)) %>% #duplicate each row 12 times 
@@ -151,19 +199,31 @@ pheno_weekly <- pheno %>%
   mutate(week=row_number(), #12 weeks for each indiv
          week_next=lead(week, order_by = week), 
          elapsed_weeks= week_next - week, #interval length in weeks
-         size = if_else(week==1, beta, #size in week 1 is the min size (beta)
+         size = if_else(germinated==1, if_else(week==1, beta, #size in week 1 is the min size (beta)
                         weibull(t = week, #otherwise use the weibull formula to calculate size
                                 alpha = 40,
                                 beta = beta,
                                 k = k, 
-                                delta = 0.5))) %>%
+                                delta = 0.5)),
+                        NA) # didn't germinate
+                        ) %>%
+  ungroup() %>%
+  mutate(size.scale = as.numeric(scale(size, scale = diff(range(size, na.rm = TRUE))))) %>% # could also try traditional scaling, but this gives range of -1 to +1
+  group_by(Indiv_ID) %>%
   
   #weekly survival
-  mutate(weekly.surv.prob = y1surv.prob^(1/weeks),
-         alive = rbinom(n(), size = 1, prob = weekly.surv.prob), #stay alive this week?
-         alive = cummin(alive)) %>% # if dead in a previous week, stay dead
+  mutate(weekly.surv.prob = weekly_surv(pick(size.scale, y1surv.prob, week, established), weeks, estab_weeks), 
+         alive = ifelse(established, rbinom(n(), size = 1, prob = weekly.surv.prob), established), #stay alive this week?
+         alive = cummin(alive),  # if dead in a previous week, stay dead
+         y1surv = min(alive)) %>%
+  
+  # update other traits based on death week
+  mutate(size=ifelse(alive==1, size, NA), # if plant is dead, make size NA
+         flowered = ifelse(sum(alive)>=8,  #only flower if alive for at least 8 weeks
+           rbinom(n(), size = 1, prob = flowering.prob), NA),
+         fruitPerPlant = ifelse(flowered & sum(alive)>=10, fruitPerPlant, NA)
+         ) %>%
   ungroup()
-pheno_weekly
 ```
 
 ## Extract Genotype Scores
@@ -172,12 +232,16 @@ pheno_weekly
 genotype_scores <- pop1@gv %>%
   as_tibble() %>%
   rownames_to_column(var = "Indiv_ID") %>%
-  mutate(Indiv_ID = as.integer(Indiv_ID)) %>%
+  mutate(Indiv_ID = as.integer(Indiv_ID),
+         k=k100/100,
+         k = ifelse(k <=0, min(k[k>0], na.rm = TRUE), k) # no negative k
+) %>%
   select(Indiv_ID, everything())
 
 # Join genotype scores with phenotypic data
 pheno_weekly_merged <- pheno_weekly %>%
-  left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno"))
+  left_join(genotype_scores, by = "Indiv_ID", suffix = c("_pheno", "_geno")) %>%
+  mutate(across(matches("beta|fruit"), \(x) ifelse(x < 0, min(x[x > 0], na.rm = TRUE), x)))
 
 pheno_weekly_merged %>% 
   select(Indiv_ID, week, size, week_next, germination.logit_geno, germination.logit_pheno)
