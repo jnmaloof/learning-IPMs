@@ -44,6 +44,7 @@ library(broom)
 library(broom.mixed)
 library(magrittr)
 library(lmerTest)
+library(patchwork)
 # commented these outs becuase it was flagging a ton in brms and if I don't use it at all it doesn't check.
 # conflicted::conflicts_prefer(lmerTest::lmer)
 # conflicted::conflicts_prefer(dplyr::filter)
@@ -51,6 +52,85 @@ library(lmerTest)
 # conflicted::conflicts_prefer(brms::ar)
 # conflicted::conflicts_prefer(Matrix::expand)
 ```
+## test behavior of brms when skipping RE: are they included in predictions?
+
+no fixed effects
+```{r}
+set.seed(999)
+REs <- tibble(group = LETTERS[1:10], re=rnorm(10))
+
+df <- tibble(value = rnorm(1000, mean = 10, sd = 1), group = rep_along(value, LETTERS[1:10])) %>%
+  left_join(REs, by = "group") %>%
+  mutate(y=value+re)
+
+test.model <- brm(y~(1|group), data=df)
+
+summary(test.model)
+
+newdata <- tibble(group = rep_len(LETTERS[11:20], 1000))
+
+#ndraws is the number of times the posterior is sampled from.  ndraws = 1 gives us 1 stochastic realization of a new data set.  So we could do multiple draws and the have stochastic sampling.
+
+df$pred.noRE <- posterior_predict(test.model, newdata = newdata, ndraws = 1, re_formula = ~0)[1,]
+
+df$pred.uncert <- posterior_predict(test.model, newdata = newdata, ndraws = 1, allow_new_levels = TRUE, sample_new_levels = "uncertainty")[1,]
+
+df$pred.gaus <- posterior_predict(test.model, newdata = newdata, ndraws = 1, allow_new_levels = TRUE, sample_new_levels = "gaussian")[1,]
+
+df %>% summarise(across(where(is.numeric), sd))
+```
+in the above, "y" is the "real" data, and the "pred" columns are different ways of generating a new data set.  both the uncertainty and Guassian methods seem like they could be okay, but let's do 4,000 draws (default) to better compare the different methods
+
+```{r}
+pred.uncert <- posterior_predict(test.model, newdata = newdata, allow_new_levels = TRUE, sample_new_levels = "uncertainty")
+
+pred.gaus <- posterior_predict(test.model, newdata = newdata, allow_new_levels = TRUE, sample_new_levels = "gaussian")
+
+str(pred.uncert) # each row is 1 sample from the posterior, each column is 1 of the 1,000 simulated measurements
+
+pred.uncert.sd <- apply(pred.uncert, 1, sd) # std dev in each draw
+pred.gaus.sd <- apply(pred.gaus, 1, sd)
+colMeans(cbind(pred.uncert.sd, pred.gaus.sd))
+boxplot(cbind(pred.uncert.sd, pred.gaus.sd))
+```
+
+Try with continuous fixed effects to make sure that generated data preserves relationship with fixed effects
+
+```{r}
+set.seed(999)
+REs <- tibble(group = LETTERS[1:10], re=rnorm(10))
+
+df2 <- tibble(value = rnorm(1000, mean = 10, sd = 1),
+             group = rep_along(value, LETTERS[1:10]),
+             fixef = runif(1000, 0, 1)) %>%
+  left_join(REs, by = "group") %>%
+  mutate(y=value*(1+fixef)+re)
+
+test.model2 <- brm(y ~ fixef + (1|group), data=df2)
+
+summary(test.model2)
+
+newdata2 <- tibble(group = rep_len(LETTERS[11:20], 1000),
+                   fixef = runif(1000, 0, 1))
+
+#ndraws is the number of times the posterior is sampled from.  ndraws = 1 gives us 1 stochastic realization of a new data set.  So we could do multiple draws and the have stochastic sampling.
+
+newdata2$pred.gaus <- posterior_predict(test.model2, newdata = newdata2, ndraws = 1, allow_new_levels = TRUE, sample_new_levels = "gaussian")[1,]
+
+pl1 <- df2 %>% ggplot(aes(x=fixef, y = y)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle("original")
+
+pl2 <- newdata2 %>% ggplot(aes(x=fixef, y = pred.gaus)) +
+  geom_point() +
+  geom_smooth() +
+  ggtitle("brms generated")
+
+pl1 + pl2
+```
+
+
 
 ## Load the data
 ```{r}
@@ -326,7 +406,8 @@ Steps:
 ### mating and next generation
 ```{r}
 calc.geno <- function(pop, size = 2000) {
-  pop <- pop %>% filter(y1surv==1, week==1) %>% # week doesn't matter but need to reduce to 1 row per individual 
+  pop <- pop %>% ungroup() %>%
+    filter(y1surv==1, week==1) %>% # week doesn't matter but need to reduce to 1 row per individual 
     select(ends_with("geno"))
   pop1 <- tibble(Indiv_ID=1:size) %>%
     mutate(genos = map(Indiv_ID, \(x) {slice_sample(pop, n = 2)  %>% # get two parents
@@ -446,7 +527,8 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
            alive = lag(alive_next, default = unique(established)),
            y1surv = min(germinated, established, alive, na.rm = TRUE),
            size_next = ifelse(alive_next, size_next, NA),
-           size = ifelse(alive, size, NA)) %>% arrange(Indiv_ID, week)
+           size = ifelse(alive, size, NA)) %>% arrange(Indiv_ID, week) %>%
+    ungroup()
   
   pred
 }
@@ -460,9 +542,28 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
 
 ngenerations <- 100
 
-generations <- tibble(gen = 1:ngenerations)
+generations <- tibble(gen = 1:ngenerations, seed=list(NULL), pop=list(NULL))
+
+generations$seed[[1]] <- calc.geno(simpop)
+generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
 
 
+for(i in 2:ngenerations) {
+  generations$seed[[i]] <- calc.geno(generations$pop[[i-1]])
+  generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
+}
+
+
+generations %>%
+  rowwise() %>%
+  mutate(test=lag(gen))
+
+generations <- generations %>%
+  rowwise() %>%
+  mutate(seed = ifelse(is.null(seed), calc.geno(lag(pop))),
+         pop = calc.pheno(seed))
+
+saveRDS(generations, file = str_c("../output/simpop_", ngenerations, "_gen.Rds"))
 
 ```
 
