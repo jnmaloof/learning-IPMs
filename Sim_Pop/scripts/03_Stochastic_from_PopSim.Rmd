@@ -228,8 +228,8 @@ summary(germ.model.geno.brms)
 germ.predict.df <- simpop_timeprep_germ %>%
   mutate(pheno.glm = predict(germ.model.pheno.glm, type = "response"),
          geno.glm = predict(germ.model.geno.glm, type = "response" ),
-         pheno.brm = predict(germ.model.pheno.brms, type = "response")[,"Estimate"],
-         geno.brm = predict(germ.model.geno.brms, type = "response")[,"Estimate"]
+         pheno.brm = posterior_predict(germ.model.pheno.brms, type = "response", ndraws=1)[1,],
+         geno.brm = posterior_predict(germ.model.geno.brms, type = "response", ndraws = 1)[1,]
   )
 
 germ.predict.df
@@ -241,60 +241,6 @@ germ.predict.df %>%
   ggplot(aes(x=germination.logit_geno_scale, y = value, color = name)) +
   geom_point() +
   facet_wrap(~ name)
-```
-
-predict actual germination and compare to the observed data
-
-```{r}
-germ.predict.df <- germ.predict.df %>%
-  rename(germinated.obs = germinated) %>%
-  mutate(germinated.pred.brm = rbinom(n(), 1, geno.brm),
-         germinated.pred.glm = rbinom(n(), 1, geno.glm),
-         germinated.prob.orig = inv_logit_scaled(germination.logit_geno))
-
-# observed vs modeled genotype
-germ.predict.df %>%
-  ggplot(aes(x=germinated.prob.orig, y = geno.brm)) +
-  geom_point()
-
-# germination or predicted germination as a function of original genotype
-germ.predict.df %>%
-  pivot_longer(c(germinated.obs, germinated.pred.brm),
-               names_prefix = "germinated.", 
-               values_to = "germinated",
-               names_to = "data_source") %>%
-  ggplot(aes(x=germinated.prob.orig, y = germinated, color = data_source)) +
-  geom_point(position = position_jitter(width = 0, height = .1), alpha = 0.5) +
-  geom_smooth()
-```
-
-Variance for original and predicted data
-```{r}
-# Calculate binned variance 
-germ.predict.df %>%
-  mutate(x_bins = cut(germinated.prob.orig, breaks = 15)) %>%  # Create bins
-  pivot_longer(c(germinated.obs, germinated.pred.brm, germinated.pred.glm),
-               names_prefix = "germinated.", 
-               values_to = "germinated",
-               names_to = "data_source") %>%
-  group_by(x_bins, data_source) %>%
-  summarise(
-    mean_y = mean(germinated),
-    var_y = var(germinated),
-    dispersion_index = var_y / mean_y,
-    n = n(),
-    x_midpoint = mean(germinated.prob.orig),
-    .groups = 'drop'
-  ) %>%
-  ggplot(aes(x = x_midpoint, y = dispersion_index, color=data_source)) +
-  geom_point(aes(size = n)) +
-  geom_smooth(method = "loess", se = TRUE) +
-  labs(x = "germinated.prob.geno.orig", 
-       y = "Variance",
-       title = "Variance as Function of Geno Germ Prob") +
-  theme_minimal() +
-  scale_color_viridis_d()
-
 ```
 
 
@@ -405,16 +351,61 @@ Steps:
 
 ### mating and next generation
 ```{r}
+
+# This code was not efficient and has been replaced
+# calc.geno <- function(pop, size = 2000) {
+#   pop <- pop %>% ungroup() %>%
+#     filter(y1surv==1, week==1) %>% # week doesn't matter but need to reduce to 1 row per individual 
+#     select(ends_with("geno"))
+#   pop1 <- tibble(Indiv_ID=str_c(1:size, "X")) %>% # add X so that these are interpreted as new RE levels rather than the ones in the original data set
+#     mutate(genos = map(Indiv_ID, \(x) {slice_sample(pop, n = 2)  %>% # get two parents
+#         summarize(across( .cols = everything(), .fns = mean))})) %>% # average the genotype scores
+#     unnest(genos)
+#   pop1
+# }
+
+# longer coding but much, much faster
 calc.geno <- function(pop, size = 2000) {
-  pop <- pop %>% ungroup() %>%
-    filter(y1surv==1, week==1) %>% # week doesn't matter but need to reduce to 1 row per individual 
+  # Pre-filter and select once
+  pop_filtered <- pop %>% 
+    ungroup() %>%
+    filter(y1surv == 1, week == 1) %>%
     select(ends_with("geno"))
-  pop1 <- tibble(Indiv_ID=1:size) %>%
-    mutate(genos = map(Indiv_ID, \(x) {slice_sample(pop, n = 2)  %>% # get two parents
-        summarize(across( .cols = everything(), .fns = mean))})) %>% # average the genotype scores
-    unnest(genos)
-  pop1
+  
+  n_pop <- nrow(pop_filtered)
+  
+  if (n_pop < 2) {
+    stop("Need at least 2 individuals in the population to avoid self-mating")
+  }
+  
+  # Generate parent1 indices
+  parent1_indices <- sample.int(n_pop, size, replace = TRUE)
+  
+  # Generate parent2 indices, ensuring they're different from parent1
+  parent2_indices <- integer(size)
+  for (i in 1:size) {
+    # Create a vector of all possible indices except parent1
+    available_indices <- setdiff(1:n_pop, parent1_indices[i])
+    parent2_indices[i] <- sample(available_indices, 1)
+  }
+  
+  # Extract parent genotypes efficiently
+  parent1_genos <- pop_filtered[parent1_indices, ]
+  parent2_genos <- pop_filtered[parent2_indices, ]
+  
+  # Calculate offspring genotypes (average of parents) using vectorized operations
+  offspring_genos <- (parent1_genos + parent2_genos) / 2
+  
+  # Add individual IDs
+  offspring_genos$Indiv_ID <- paste0(1:size, "X") # Adding "X" to distinguish these from the orginal IDs, so that new RE levels are used.
+  
+  # Reorder columns to match original output
+  offspring_genos <- offspring_genos %>%
+    select(Indiv_ID, everything())
+  
+  return(offspring_genos)
 }
+
 ```
 
 ### prediction of phenotypes
@@ -423,8 +414,8 @@ pred.size <- function(d, m.size) {
   d %>% 
     drop_na(size) %>%
     mutate(size_next = {
-      predict(m.size, newdata = cbind(pick(k_geno, size), week), re_formula = ~0) %>%
-        magrittr::extract(,"Estimate")}) %>%
+      posterior_predict(m.size, newdata = cbind(pick(k_geno, size, Indiv_ID), week), ndraws=1, allow_new_levels = TRUE) %>%
+        magrittr::extract(1,)}) %>%
     select(Indiv_ID, size_next, week) %>%
     right_join(d, by = c("Indiv_ID", "week")) %>%
     arrange(Indiv_ID) %>%
@@ -435,8 +426,8 @@ pred.surv <- function(d, m.surv) {
   d %>%
     drop_na(size.scale) %>%
     mutate(alive_next = {
-      predict(m.surv, newdata = pick(Indiv_ID, size.scale, y1surv.logit_geno), re_formula = ~0) %>%
-        magrittr::extract(, "Estimate") %>%
+      posterior_predict(m.surv, newdata = pick(Indiv_ID, size.scale, y1surv.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
+        magrittr::extract(1,) %>%
         rbinom(n(), size = 1, prob = .)
     }) %>% 
     select(Indiv_ID, alive_next, week) %>%
@@ -453,15 +444,15 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
     
     # germination, establishment, beta (initial size)
     mutate(
-      germinated = { predict(m.germ, newdata = pick(Indiv_ID, germination.logit_geno)) %>%
-          magrittr::extract(, "Estimate") %>%
+      germinated = { posterior_predict(m.germ, newdata = pick(Indiv_ID, germination.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
+          magrittr::extract(1,) %>%
           rbinom(n=n(), size = 1, prob = .)
       },
       
       established = 
         ifelse(germinated, 
-               { predict(m.estab, newdata = pick(Indiv_ID, establishment.logit_geno)) %>%
-                   magrittr::extract(, "Estimate") %>%
+               { posterior_predict(m.estab, newdata = pick(Indiv_ID, establishment.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
+                   magrittr::extract(1,) %>%
                    rbinom(n=n(), size = 1, prob = .)},
                NA), # if no germination, no establishment
       
@@ -540,28 +531,18 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
 # need a tibble with 1 row per generation
 # then call calc.geno, then calc.pheno
 
-ngenerations <- 100
+ngenerations <- 100 # note: 4 seconds per generation
 
 generations <- tibble(gen = 1:ngenerations, seed=list(NULL), pop=list(NULL))
 
 generations$seed[[1]] <- calc.geno(simpop)
-generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
 
+generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
 
 for(i in 2:ngenerations) {
   generations$seed[[i]] <- calc.geno(generations$pop[[i-1]])
   generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
 }
-
-
-generations %>%
-  rowwise() %>%
-  mutate(test=lag(gen))
-
-generations <- generations %>%
-  rowwise() %>%
-  mutate(seed = ifelse(is.null(seed), calc.geno(lag(pop))),
-         pop = calc.pheno(seed))
 
 saveRDS(generations, file = str_c("../output/simpop_", ngenerations, "_gen.Rds"))
 
