@@ -45,6 +45,9 @@ library(broom.mixed)
 library(magrittr)
 library(lmerTest)
 library(patchwork)
+library(here)
+library(future)
+library(furrr)
 # commented these outs becuase it was flagging a ton in brms and if I don't use it at all it doesn't check.
 # conflicted::conflicts_prefer(lmerTest::lmer)
 # conflicted::conflicts_prefer(dplyr::filter)
@@ -134,7 +137,7 @@ pl1 + pl2
 
 ## Load the data
 ```{r}
-simpop <- read_csv("../output/PopSim_Phenos-Genos_v4.csv")
+simpop <- read_csv(here("Sim_Pop", "output", "PopSim_Phenos-Genos_v4.csv"))
 names(simpop)
 #logit_pheno = scaled probability/phenotype
 #_geno = genotype score for that trait 
@@ -544,10 +547,110 @@ for(i in 2:ngenerations) {
   generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
 }
 
-saveRDS(generations, file = str_c("../output/simpop_", ngenerations, "_gen.Rds"))
+saveRDS(generations, file = here("Sim_Pop", "output", str_c("simpop_", ngenerations, "_gen.Rds")))
 
 ```
 
+Look at trends over time...
+
+```{r}
+# generations <- readRDS("../output/simpop_100_gen.Rds")
+generations %>% select(-seed) %>%
+  unnest(pop) %>%
+  filter(week==max(week)) %>% # get year-end info
+  group_by(gen) %>%
+  summarize(across(c(germinated, established, y1surv), \(x) mean(x, na.rm = TRUE))) %>%
+  pivot_longer(-gen, names_to = "trait", values_to = "proportion") %>%
+  ggplot(aes(x=gen, y= proportion, color = trait)) +
+  geom_line()
+
+generations %>% select(-seed) %>%
+  unnest(pop) %>%
+  filter(week==max(week)) %>% # get year-end info
+  group_by(gen) %>%
+  summarize(size = mean(size, na.rm = TRUE)) %>%
+  ggplot(aes(x=gen, y= size)) +
+  geom_line()
+
+```
+
+
+## process mutliple draws for each generation
+
+At first I thought I could just pull more draws from a given prediction, but this is incorrect because the input data will be different...
+
+```{r}
+nsims <- 8 # number of independent simulations to run
+ngenerations <- 100 # note: 4 seconds per generation
+
+# one simulation per list element
+simulation.list <- map(1:nsims, \(sim) tibble(gen = 1:ngenerations, seed=list(tibble()), pop=list(tibble())))
+
+walk(simulation.list, \(sim) print(head(sim, 2)))
+
+# Set up parallel processing with 8 cores
+future::plan(future::multisession, workers = 8)
+
+system.time({
+simulation.list <- future_map(simulation.list, function(sim) {
+  sim$seed[[1]] <- calc.geno(simpop)
+  sim$pop[[1]] <- calc.pheno(sim$seed[[1]])
+  return(sim)
+}, .options = furrr_options(seed = TRUE, scheduling = 1))
+})
+
+# Loop through all simulations
+system.time({
+  # Run simulations in parallel with improved efficiency
+  simulation.list <- future_map(simulation.list, function(sim) {
+    # Process each generation sequentially
+    for(i in 2:ngenerations) {
+      # Use parent population to generate next generation
+      sim$seed[[i]] <- calc.geno(sim$pop[[i-1]])
+      sim$pop[[i]] <- calc.pheno(sim$seed[[i]])
+    }
+    return(sim)
+  }, .options = furrr_options(seed = TRUE, scheduling = 1))
+})
+
+# Save all simulations to a single file
+saveRDS(simulation.list, file = here("Sim_Pop", "output", 
+                                      str_c("simpop_", nsims, "sims_", 
+                                           ngenerations, "gen_", Sys.Date(), ".Rds")))
+```
+
+CODE BELOW HAS NOT BEEN TESTED
+```{r}
+# OExtract summary statistics from all simulations - parallelized version
+system.time({
+  sim_summary <- future_map_dfr(1:nsims, function(sim_num) {
+    simulation.list[[sim_num]] %>% 
+      select(-seed) %>%
+      unnest(pop) %>%
+      filter(week == max(week)) %>% # get year-end info
+      group_by(gen) %>%
+      summarize(
+        germinated = mean(germinated, na.rm = TRUE),
+        established = mean(established, na.rm = TRUE),
+        y1surv = mean(y1surv, na.rm = TRUE),
+        size = mean(size, na.rm = TRUE),
+        .groups = "drop"  # Avoid group_by warning messages
+      ) %>%
+      mutate(simulation = sim_num)
+  }, .options = furrr_options(seed = TRUE))
+})
+
+# Optional: Save the summary data
+write_csv(sim_summary, here("Sim_Pop", "output", 
+                           str_c("simpop_", nsims, "sims_summary.csv")))
+for(i in 2:ngenerations) {
+  generations$seed[[i]] <- calc.geno(generations$pop[[i-1]])
+  generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
+}
+
+saveRDS(generations, file = here("Sim_Pop", "output", str_c("simpop_", ngenerations, "_gen_",  ".Rds")))
+
+```
 
 
 # old code below 
