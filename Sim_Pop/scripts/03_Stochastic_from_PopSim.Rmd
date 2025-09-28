@@ -575,22 +575,25 @@ generations %>% select(-seed) %>%
 ```
 
 
-## process mutliple draws for each generation
+## process mutliple simulations for each generation
 
 At first I thought I could just pull more draws from a given prediction, but this is incorrect because the input data will be different...
 
 ```{r}
-nsims <- 8 # number of independent simulations to run
+nsims <- 100 # number of independent simulations to run
 ngenerations <- 100 # note: 4 seconds per generation
 
 # one simulation per list element
 simulation.list <- map(1:nsims, \(sim) tibble(gen = 1:ngenerations, seed=list(tibble()), pop=list(tibble())))
 
-walk(simulation.list, \(sim) print(head(sim, 2)))
+#walk(simulation.list, \(sim) print(head(sim, 2)))
 
 # Set up parallel processing with 8 cores
 future::plan(future::multisession, workers = 8)
 
+# first generation
+# 288 seconds with 16 cores
+# 177 seconds with 8 cores
 system.time({
 simulation.list <- future_map(simulation.list, function(sim) {
   sim$seed[[1]] <- calc.geno(simpop)
@@ -600,6 +603,8 @@ simulation.list <- future_map(simulation.list, function(sim) {
 })
 
 # Loop through all simulations
+# 3680 seconds with 16 processors
+# 11522.69 with 8 processors(!)
 system.time({
   # Run simulations in parallel with improved efficiency
   simulation.list <- future_map(simulation.list, function(sim) {
