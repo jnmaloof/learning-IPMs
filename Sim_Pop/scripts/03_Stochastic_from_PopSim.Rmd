@@ -619,6 +619,7 @@ system.time({
 })
 
 # Save all simulations to a single file
+# 3.1 GB file for 100 gnerations and 100 simulations
 saveRDS(simulation.list, file = here("Sim_Pop", "output", 
                                       str_c("simpop_", nsims, "sims_", 
                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
