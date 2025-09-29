@@ -372,7 +372,7 @@ calc.geno <- function(pop, size = 2000) {
   # Pre-filter and select once
   pop_filtered <- pop %>% 
     ungroup() %>%
-    filter(y1surv == 1, week == 1) %>%
+    filter(y1surv == 1, week == max(week)) %>%
     select(ends_with("geno"))
   
   n_pop <- nrow(pop_filtered)
