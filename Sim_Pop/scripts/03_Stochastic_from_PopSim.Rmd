@@ -597,7 +597,7 @@ simulation.list <- map(1:nsims, \(sim) tibble(gen = 1:ngenerations, seed=list(ti
 
 #walk(simulation.list, \(sim) print(head(sim, 2)))
 
-# Set up parallel processing with 8 cores
+# Set up parallel processing
 future::plan(future::multisession, workers = 16)
 
 # first generation
