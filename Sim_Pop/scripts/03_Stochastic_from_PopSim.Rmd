@@ -430,8 +430,7 @@ pred.surv <- function(d, m.surv) {
     drop_na(size.scale) %>%
     mutate(alive_next = {
       posterior_predict(m.surv, newdata = pick(Indiv_ID, size.scale, y1surv.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
-        magrittr::extract(1,) %>%
-        rbinom(n(), size = 1, prob = .)
+        magrittr::extract(1,) 
     }) %>% 
     select(Indiv_ID, alive_next, week) %>%
     right_join(d, by = c("Indiv_ID", "week")) %>%
@@ -448,15 +447,13 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
     # germination, establishment, beta (initial size)
     mutate(
       germinated = { posterior_predict(m.germ, newdata = pick(Indiv_ID, germination.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
-          magrittr::extract(1,) %>%
-          rbinom(n=n(), size = 1, prob = .)
+          magrittr::extract(1,) # note: no need to go to rbinom(), already outputting 0s and 1s
       },
       
       established = 
         ifelse(germinated, 
                { posterior_predict(m.estab, newdata = pick(Indiv_ID, establishment.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
-                   magrittr::extract(1,) %>%
-                   rbinom(n=n(), size = 1, prob = .)},
+                   magrittr::extract(1,) },
                NA), # if no germination, no establishment
       
       # need to create predictive function for this, but in the meantime...
@@ -481,11 +478,7 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
   # size
   # must go week by week since model depends on size in the previous week
   # maybe should use Weibull and then can do all at once
-  # POTENTIAL PROBLEM: I HAVE TO REMOVE THE RANDOM EFFECTS, SINCE WE HAVE DIFFERENT INDIVIDUALS
-  # BUT I MAY BE LOSING AN IMPORTANT SOURCE OF VARIATION AND COVARIANCE
-  # COULD POTENTIALLY ADD SOME VARIANCE BACK IN LATER
-  # NEED TO CHECK THIS OUT
-  
+
   for(w in 1:(weeks-1)) {
     pred <- pred %>%
       ungroup() %>%
