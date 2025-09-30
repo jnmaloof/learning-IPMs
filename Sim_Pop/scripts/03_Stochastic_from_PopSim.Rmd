@@ -697,6 +697,7 @@ simulation.list <- future_map(simulation.list, function(sim) {
 # Loop through all simulations
 # 3680 seconds with 16 processors SIMPLIFY = FALSE (Is this for real?)
 # or 7000 SIMPLIFY = TRUE, surprised but I guess the simplify operations take time.
+# 3980 with 30 processors and simplify = TRUE
 
 future::plan(future::multisession, workers = 30)
 
