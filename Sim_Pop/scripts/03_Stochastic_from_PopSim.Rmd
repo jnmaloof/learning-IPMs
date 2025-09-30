@@ -421,24 +421,28 @@ calc.geno <- function(pop, size = 2000) {
   # Pre-filter and select once
   pop_filtered <- pop %>% 
     ungroup() %>%
-    filter(y1surv == 1, week == max(week)) %>%
+    filter(y1surv == 1, week == max(week), fruitPerPlant_pheno > 0) 
+  
+  prob <- pop_filtered %>% pull(fruitPerPlant_pheno) 
+  
+  pop_filtered <- pop_filtered %>%
     select(ends_with("geno"))
   
   n_pop <- nrow(pop_filtered)
   
   if (n_pop < 2) {
-    stop("Need at least 2 individuals in the population to avoid self-mating")
+    stop("Need at least 2 individuals with fruit in the population to avoid self-mating")
   }
   
   # Generate parent1 indices
-  parent1_indices <- sample.int(n_pop, size, replace = TRUE)
+  parent1_indices <- sample.int(n_pop, size, replace = TRUE, prob = prob)
   
   # Generate parent2 indices, ensuring they're different from parent1
   parent2_indices <- integer(size)
   for (i in 1:size) {
     # Create a vector of all possible indices except parent1
     available_indices <- setdiff(1:n_pop, parent1_indices[i])
-    parent2_indices[i] <- sample(available_indices, 1)
+    parent2_indices[i] <- sample(available_indices, 1, prob = prob[available_indices])
   }
   
   # Extract parent genotypes efficiently
