@@ -486,11 +486,37 @@ pred.surv <- function(d, m.surv) {
     arrange(Indiv_ID, week) %>%
     pull(alive_next)
 }
+
+pred.flower <- function(d, m.flower) {
+  d.small <- d %>% filter(week == 12, y1surv = TRUE) %>%
+    mutate(flowered = { 
+             posterior_predict(m.flower, newdata = pick(Indiv_ID, flowering.logit_geno), ndraws = 1) %>% 
+                 magrittr::extract(1,)
+      }
+    ) %>%
+    select(Indiv_ID, flowered) %>%
+    right_join(d, by = "Indiv_ID") %>%
+    arrange(Indiv_ID, week) %>%
+    pull(flowered)
+}
+  
+pred.fruit <- function(d, m.fruit) {
+   d %>% filter(week == 12, y1surv = TRUE, flowered==1) %>%
+    mutate(fruitPerPlant_pheno = {
+      posterior_predict(m.fruit, newdata = pick(Indiv_ID, fruitPerPlant_geno), ndraws = 1) %>%
+        magrittr::extract(1,)        
+    }
+    ) %>%
+    select(Indiv_ID, fruitPerPlant_pheno) %>%
+    right_join(d, by = "Indiv_ID") %>%
+    arrange(Indiv_ID, week) %>%
+    pull(fruitPerPlant_pheno)
+}
 ```
 
 
 ```{r}
-calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.geno.brms, m.estab = estab.model.geno.brms, m.size = size.model.geno.brms, m.surv=surv.model.geno.brms, simplify=TRUE) {
+calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.geno.brms, m.estab = estab.model.geno.brms, m.size = size.model.geno.brms, m.surv=surv.model.geno.brms, m.flower = flowering.model.geno.brms, m.fruit = fruit.model.geno.brms, simplify=TRUE) {
   pred <- pop %>%
     
     # germination, establishment, beta (initial size)
@@ -565,6 +591,13 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
            size_next = ifelse(alive_next, size_next, NA),
            size = ifelse(alive, size, NA)) %>% arrange(Indiv_ID, week) %>%
     ungroup()
+  
+  # flowering and fruit
+  
+  pred <- pred %>%
+    arrange(Indiv_ID, week) %>% # just to be safe
+    mutate(flowered = pred.flower(pick(Indiv_ID, flowering.logit_geno, week, y1surv), m.flower = flowering.model.geno.brms),
+           fruitPerPlant_pheno = pred.fruit(pick(Indiv_ID, fruitPerPlant_geno, week, flowered), m.fruit = fruit.model.geno.brms))
   
   if(simplify==TRUE) {
     pred <- pred %>%
