@@ -588,7 +588,7 @@ At first I thought I could just pull more draws from a given prediction, but thi
 ```{r}
 #ran this on jetstream m3.xl: 32 CPU, 125GB RAM.  
 #if running with full output it will take almost all of the RAM
-# if running with simplify = TRUE for calc.pheno, then used ~ 36GB RAM, so a m3.l instance should be okay.
+# if running with simplify = TRUE for calc.pheno and 16 cores, used ~ 36GB RAM, so a m3.l instance should be okay.
 
 
 nsims <- 100 # number of independent simulations to run
@@ -618,6 +618,7 @@ simulation.list <- future_map(simulation.list, function(sim) {
 # Loop through all simulations
 # 3680 seconds with 16 processors SIMPLIFY = FALSE (Is this for real?)
 # or 7000 SIMPLIFY = TRUE, surprised but I guess the simplify operations take time.
+# 3824 seconds with 30 processors
 
 future::plan(future::multisession, workers = 30)
 
