@@ -7,6 +7,16 @@ output:
     keep_md: true
 ---
 
+TODOs
+
+[*] in the stochastic sims am I accounting/filtering for germination correctly when predicting establishment?
+[] add reproductive output models
+[] incorporate reproductive output into mating
+[] size dependence for flowering (in sim data and models)
+[] time dependence for flowering (in sim data and models)
+[] size dependence for fruit per plant (in sim data and models)
+[] possible time dependence for fruit per plant (in sim data and models)
+
 I am modifying Brandie's script to work on stochastic simulations (as an alternative to the matrices)
 
 ```{r setup, include=FALSE}
@@ -336,6 +346,45 @@ summary(size.model.geno.brms)
 
 plot(size.model.geno.brms, ask = FALSE)
 ```
+## flowering
+
+```{r}
+# for now just take week 12
+# need to get more sophisticated about flowering time, size, etc.
+
+simpop_timeprep_flowering <- simpop_timeprep %>% filter(week==12, y1surv==1) # don't really need to filter for survival because we have NAs in flowered
+
+flowering.model.geno.brms <- brm(flowered ~ 1 + flowering.logit_geno,
+                             prior = set_prior("normal(0, 2)", class = "b"),
+                             family = bernoulli(), data = simpop_timeprep_flowering,
+                             refresh = 0)
+
+plot(flowering.model.geno.brms, ask=FALSE)
+summary(flowering.model.geno.brms)
+```
+
+## fruit
+
+```{r}
+# for now just take week 12
+# need to get more sophisticated about flowering time, size, etc.
+
+simpop_timeprep_fruit <- simpop_timeprep %>% filter(week==12, y1surv==1, flowered==1)
+
+fruit.model.geno.brms <- brm(fruitPerPlant_pheno ~ fruitPerPlant_geno,
+                             prior = set_prior("normal(0,2", class = "b"),
+                             data = simpop_timeprep_fruit,
+                             refresh = 0
+                             )
+
+plot(fruit.model.geno.brms, ask = FALSE)
+summary(fruit.model.geno.brms)
+
+```
+
+
+
+
 
 ## Try Stocahstic modeling for a P matrix.
 
