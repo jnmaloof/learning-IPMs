@@ -12,6 +12,8 @@ TODOs
 [*] in the stochastic sims am I accounting/filtering for germination correctly when predicting establishment?
 [*] add reproductive output models
 [*] incorporate reproductive output into mating
+[] size of next gen depends on amount of fruit/seed made in this generation
+[] make all geno effects mean centered?
 [] size dependence for flowering (in sim data and models)
 [] time dependence for flowering (in sim data and models)
 [] size dependence for fruit per plant (in sim data and models)
@@ -69,8 +71,8 @@ library(furrr)
 
 no fixed effects
 ```{r}
-set.seed(999)
-REs <- tibble(group = LETTERS[1:10], re=rnorm(10))
+set.seed(888)
+REs <- tibble(group = LETTERS[1:13], re=rnorm(13, mean = 0, sd = 1))
 
 df <- tibble(value = rnorm(1000, mean = 10, sd = 1), group = rep_along(value, LETTERS[1:10])) %>%
   left_join(REs, by = "group") %>%
@@ -80,7 +82,7 @@ test.model <- brm(y~(1|group), data=df)
 
 summary(test.model)
 
-newdata <- tibble(group = rep_len(LETTERS[11:20], 1000))
+newdata <- tibble(group = rep_len(LETTERS[14:26], 1000))
 
 #ndraws is the number of times the posterior is sampled from.  ndraws = 1 gives us 1 stochastic realization of a new data set.  So we could do multiple draws and the have stochastic sampling.
 
@@ -110,11 +112,11 @@ boxplot(cbind(pred.uncert.sd, pred.gaus.sd))
 Try with continuous fixed effects to make sure that generated data preserves relationship with fixed effects
 
 ```{r}
-set.seed(999)
-REs <- tibble(group = LETTERS[1:10], re=rnorm(10))
+set.seed(888)
+REs <- tibble(group = LETTERS[1:13], re=rnorm(13))
 
 df2 <- tibble(value = rnorm(1000, mean = 10, sd = 1),
-             group = rep_along(value, LETTERS[1:10]),
+             group = rep_along(value, LETTERS[1:13]),
              fixef = runif(1000, 0, 1)) %>%
   left_join(REs, by = "group") %>%
   mutate(y=value*(1+fixef)+re)
@@ -123,7 +125,7 @@ test.model2 <- brm(y ~ fixef + (1|group), data=df2)
 
 summary(test.model2)
 
-newdata2 <- tibble(group = rep_len(LETTERS[11:20], 1000),
+newdata2 <- tibble(group = rep_len(LETTERS[14:26], 1000),
                    fixef = runif(1000, 0, 1))
 
 #ndraws is the number of times the posterior is sampled from.  ndraws = 1 gives us 1 stochastic realization of a new data set.  So we could do multiple draws and the have stochastic sampling.
