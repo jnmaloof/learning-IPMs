@@ -19,12 +19,12 @@ plan(multisession(workers=4))
 ```
 
 ```{r}
-mem.maxVSize(36000)
-simulation.list <- readRDS(here("Sim_Pop" , "output", "simpop_100sims_100gen_2025-09-27.Rds"))
+#mem.maxVSize(36000)
+simulation.list <- readRDS(here("Sim_Pop" , "output", "simpop_100sims_100gen_2025-09-29.Rds"))
 ```
 
-For now, reduce to the last week to make the data size more manageable.  (MAYBE THIS SHOULD BE DONE WHEN GENERATING THE DATA?)
-```{r}
+currently only keep last week of data from sims so this isn't needed
+```{r, eval = FALSE}
 #92 seconds
 system.time({
 simulation.list.small <- future_map(simulation.list, function(sim) {
@@ -38,10 +38,17 @@ rm(simulation.list)
 
 ```{r}
 system.time(
-  sims.df <- bind_rows(simulation.list.small, .id = "sim")
+ # sims.df <- bind_rows(simulation.list.small, .id = "sim")
+    sims.df <- bind_rows(simulation.list, .id = "sim")
+
 )
 
+rm(simulation.list)
+
+# this takes a lot longer than system.time() reports for some reason
 system.time(sims.df <- sims.df %>% unnest(pop))
+
+head(sims.df)
 ```
 
 summary stats
@@ -50,20 +57,18 @@ system.time({
 sims.summary <- sims.df %>%
       group_by(sim, gen) %>%
       summarize(
-        germinated = mean(germinated, na.rm = TRUE),
-        established = mean(established, na.rm = TRUE),
-        y1surv = mean(y1surv, na.rm = TRUE),
-        size = mean(size, na.rm = TRUE),
-        .groups = "drop"  
+        across(c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
+               \(x) mean(x, na.rm = TRUE)),
+        .groups = "drop"
       )
 })
 sims.summary
 ```
 
-```{r, fig.height=5, fig.width=9}
+```{r, fig.height=7, fig.width=9}
 sims.summary %>%
-  pivot_longer(c(germinated, established, y1surv), names_to = "trait", values_to = "proportion") %>%
-  ggplot(aes(x=gen, y=proportion)) +
+  pivot_longer(-c(sim, gen), names_to = "trait", values_to = "value") %>%
+  ggplot(aes(x=gen, y=value)) +
   geom_line(alpha=.05, aes(group=sim)) +
   geom_smooth(se = FALSE) +
   facet_wrap(~trait, scales="free_y")
