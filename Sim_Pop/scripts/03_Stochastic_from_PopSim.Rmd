@@ -12,12 +12,15 @@ TODOs
 [*] in the stochastic sims am I accounting/filtering for germination correctly when predicting establishment?
 [*] add reproductive output models
 [*] incorporate reproductive output into mating
-[] size of next gen depends on amount of fruit/seed made in this generation
+[*] handle population demise gracefully rather than throwing an error
+[*] FruitPerPlant should be an integer
+[*] size of next gen depends on amount of fruit/seed made in this generation
 [] make all geno effects mean centered?
 [] size dependence for flowering (in sim data and models)
 [] time dependence for flowering (in sim data and models)
 [] size dependence for fruit per plant (in sim data and models)
 [] possible time dependence for fruit per plant (in sim data and models)
+[] recombination / more intellegent handling of genotypic effects in mating
 
 I am modifying Brandie's script to work on stochastic simulations (as an alternative to the matrices)
 
@@ -376,6 +379,7 @@ simpop_timeprep_fruit <- simpop_timeprep %>% filter(week==12, y1surv==1, flowere
 fruit.model.geno.brms <- brm(fruitPerPlant_pheno ~ fruitPerPlant_geno,
                              prior = set_prior("normal(0,2", class = "b"),
                              data = simpop_timeprep_fruit,
+                             family = "poisson",
                              refresh = 0
                              )
 
@@ -391,11 +395,7 @@ summary(fruit.model.geno.brms)
 ## Try Stocahstic modeling for a P matrix.
 
 * For this scenario we assume:
-* Everyone that survived until the end reproduced
-* Mating is Random
-* Fecundity is equal
 * Genotype scores are additive
-* Population size is constant at 2000 seeds
 
 Steps:
 1. Make kernel models based on 1 generation of data (this is what we did above)
@@ -419,11 +419,17 @@ Steps:
 # }
 
 # longer coding but much, much faster
-calc.geno <- function(pop, size = 2000) {
+calc.geno <- function(pop, seedPerFruit = 15, maxSeed = 5000) {
+  
+  if(nrow(pop)==0) return(pop) # population is extinct, return empty data frame
+  
   # Pre-filter and select once
   pop_filtered <- pop %>% 
     ungroup() %>%
-    filter(y1surv == 1, week == max(week), fruitPerPlant_pheno > 0) 
+    filter(y1surv == 1, week == max(week), fruitPerPlant_pheno > 0) %>%
+    mutate(seed = fruitPerPlant_pheno * seedPerFruit)
+  
+  totalSeed <- min(sum(pop_filtered$seed), maxSeed) # runaway population sizes can stall the simulation
   
   prob <- pop_filtered %>% pull(fruitPerPlant_pheno) 
   
@@ -433,18 +439,23 @@ calc.geno <- function(pop, size = 2000) {
   n_pop <- nrow(pop_filtered)
   
   if (n_pop < 2) {
-    stop("Need at least 2 individuals with fruit in the population to avoid self-mating")
+    #Need at least 2 individuals with fruit in the population to create progeny
+    return(pop_filtered[0,]) # return an empty data frame
   }
   
   # Generate parent1 indices
-  parent1_indices <- sample.int(n_pop, size, replace = TRUE, prob = prob)
+  parent1_indices <- sample.int(n_pop, totalSeed, replace = TRUE, prob = prob)
   
   # Generate parent2 indices, ensuring they're different from parent1
-  parent2_indices <- integer(size)
-  for (i in 1:size) {
+  parent2_indices <- integer(totalSeed)
+  for (i in 1:totalSeed) {
     # Create a vector of all possible indices except parent1
     available_indices <- setdiff(1:n_pop, parent1_indices[i])
-    parent2_indices[i] <- sample(available_indices, 1, prob = prob[available_indices])
+    if(length(available_indices) > 1) {
+      parent2_indices[i] <- sample(available_indices, 1, prob = prob[available_indices])
+    } else {
+      parent2_indices[i] <- available_indices
+    }
   }
   
   # Extract parent genotypes efficiently
@@ -455,7 +466,7 @@ calc.geno <- function(pop, size = 2000) {
   offspring_genos <- (parent1_genos + parent2_genos) / 2
   
   # Add individual IDs
-  offspring_genos$Indiv_ID <- paste0(1:size, "X") # Adding "X" to distinguish these from the orginal IDs, so that new RE levels are used.
+  offspring_genos$Indiv_ID <- paste0(1:totalSeed, "X") # Adding "X" to distinguish these from the orginal IDs, so that new RE levels are used.
   
   # Reorder columns to match original output
   offspring_genos <- offspring_genos %>%
@@ -523,6 +534,9 @@ pred.fruit <- function(d, m.fruit) {
 
 ```{r}
 calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.geno.brms, m.estab = estab.model.geno.brms, m.size = size.model.geno.brms, m.surv=surv.model.geno.brms, m.flower = flowering.model.geno.brms, m.fruit = fruit.model.geno.brms, simplify=TRUE) {
+  
+  if(nrow(pop)==0) return(pop) # if pop is 0, keep it at 0
+  
   pred <- pop %>%
     
     # germination, establishment, beta (initial size)
@@ -625,16 +639,17 @@ ngenerations <- 20 # note: 4 seconds per generation
 
 generations <- tibble(gen = 1:ngenerations, seed=list(NULL), pop=list(NULL))
 
-generations$seed[[1]] <- calc.geno(simpop)
+generations$seed[[1]] <- calc.geno(simpop, seedPerFruit = 4)
 
 generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
 
 for(i in 2:ngenerations) {
-  generations$seed[[i]] <- calc.geno(generations$pop[[i-1]])
+  generations$seed[[i]] <- calc.geno(generations$pop[[i-1]], seedPerFruit=4)
+  print(nrow(generations$seed[[i]]))
   generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
 }
 
-saveRDS(generations, file = here("Sim_Pop", "output", str_c("simpop_", ngenerations, "_gen.Rds")))
+# saveRDS(generations, file = here("Sim_Pop", "output", str_c("simpop_", ngenerations, "_gen.Rds")))
 
 ```
 
@@ -646,7 +661,7 @@ generations %>% select(-seed) %>%
   unnest(pop) %>%
   filter(week==max(week)) %>% # get year-end info
   group_by(gen) %>%
-  summarize(across(c(germinated, established, y1surv), \(x) mean(x, na.rm = TRUE))) %>%
+  summarize(n = n(), across(c(germinated, established, y1surv), \(x) mean(x, na.rm = TRUE))) %>%
   pivot_longer(-gen, names_to = "trait", values_to = "proportion") %>%
   ggplot(aes(x=gen, y= proportion, color = trait)) +
   geom_line()
@@ -701,7 +716,7 @@ simulation.list <- future_map(simulation.list, function(sim) {
 # or 7000 SIMPLIFY = TRUE, surprised but I guess the simplify operations take time.
 # 3824 seconds with 30 processors
 
-future::plan(future::multisession, workers = 30)
+future::plan(future::multisession, workers = 15)
 
 system.time({
   # Run simulations in parallel with improved efficiency

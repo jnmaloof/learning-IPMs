@@ -57,24 +57,24 @@ SP <- SimParam$new(founderPop)
 #Starts the process of building a new simulation by creating a new SimParam object and assigning a founder population to the class.
 
 traitMeans <- c(germination.logit = logit(0.18), #logit to scale it (from gene --> trait); used avg for all parents from Maya's data 
-                establishment.logit = logit(0.67),
-                y1surv.logit = logit(0.45),
+                establishment.logit = logit(0.25),
+                y1surv.logit = logit(0.35),
                 #alpha = 40, #Hmax = alpha -Sets the asymptote (max growth) for the Weibull model 
                 beta = 7, #Hmin = beta -Changes the y intercept (the lower limit) for the Weibull model- recruit size?
                 k100 = 1, # Divide by 100 to get K.  Often described as the growth rate --\> related to the slope of the line for the Weibull model 
                 #delta = 0.5, #Sets the inflection point - when you shift b/t concave to convex for the Weibull model 
-                flowering.logit = logit(0.25),
-                fruitPerPlant = 30)
+                flowering.logit = logit(0.2),
+                fruitPerPlant = 5)
 
 SP$addTraitA(nQtlPerChr = 10, 
              mean = traitMeans, 
-             var = (traitMeans*c(germination.logit=1,
-                                 establishment.logit=2,
-                                 y1surv.logit=6,
-                                 beta=0.25,
+             var = c(germination.logit=1,
+                                 establishment.logit=1,
+                                 y1surv.logit=1,
+                                 beta=2,
                                  k100 = 1,
-                                 flowering.logit=1.5,
-                                 fruitPerPlant=.3))^2, #genetic Var.  Numbers are multipliers of the trait means
+                                 flowering.logit=1,
+                                 fruitPerPlant=2)^2, #genetic Var.  Numbers are in SD
              
              gamma = TRUE, #a lot of small effect loci and a few large effect loci 
              shape = 1, #shape parameter for gamma distribution 
@@ -101,6 +101,7 @@ pop1 <- setPheno(pop)
 pheno <- pop1@pheno %>% as_tibble()
 dim(pheno)
 head(pheno)
+summary(pheno)
 ```
 
 ### Convert pheno logits to probabilities and phenotypes for early traits
@@ -116,6 +117,8 @@ pheno <- pheno %>%
          k = ifelse(k <=0, min(k[k>0], na.rm = TRUE), k), # no negative k
          k = ifelse(established, k, NA), #can only have a growth rate if you establish
          beta = ifelse(beta <=0, min(beta[beta>0], na.rm = TRUE), beta), # no negative k
+         fruitPerPlant = round(fruitPerPlant), # no fractional fruit
+         fruitPerPlant = ifelse(fruitPerPlant < 0, 0, fruitPerPlant) # no negative fruit
 
 ) %>% select(-k100)
 ```
