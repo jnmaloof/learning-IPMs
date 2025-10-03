@@ -15,6 +15,7 @@ TODOs
 [*] handle population demise gracefully rather than throwing an error
 [*] FruitPerPlant should be an integer
 [*] size of next gen depends on amount of fruit/seed made in this generation
+[] Create summary of pops as we go instead of returning the whole thing.
 [] make all geno effects mean centered?
 [] size dependence for flowering (in sim data and models)
 [] time dependence for flowering (in sim data and models)
