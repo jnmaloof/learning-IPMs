@@ -50,19 +50,23 @@ system.time(sims.df <- sims.df %>% unnest(pop))
 
 head(sims.df)
 ```
+NOT SURE IF POPSIZE IS GETTING CALCULATED CORRECTLY..HOW ARE THOSE EMPTY DATA FRAMES GETTING HANDLED?
 
 summary stats
 ```{r}
 system.time({
 sims.summary <- sims.df %>%
       group_by(sim, gen) %>%
-      summarize(
-        across(c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
+      summarize(popSize = sum(y1surv),
+        across( c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
                \(x) mean(x, na.rm = TRUE)),
         .groups = "drop"
       )
 })
 sims.summary
+```
+```{r}
+summary(sims.summary)
 ```
 
 ```{r, fig.height=7, fig.width=9}
@@ -76,7 +80,7 @@ sims.summary %>%
 
 ```{r}
 sims.summary %>%
-  ggplot(aes(x=gen, y=size)) +
+  ggplot(aes(x=gen, y=popSize)) +
   geom_line(alpha=.05, aes(group=sim)) +
   geom_smooth(se = FALSE)
 ```

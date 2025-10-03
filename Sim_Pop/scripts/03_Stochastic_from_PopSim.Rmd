@@ -15,7 +15,10 @@ TODOs
 [*] handle population demise gracefully rather than throwing an error
 [*] FruitPerPlant should be an integer
 [*] size of next gen depends on amount of fruit/seed made in this generation
-[] Create summary of pops as we go instead of returning the whole thing.
+[] CHECK/FIX POPSIZE CALCUALTION IN SCRIPT 4 (IF SIZE = 0 MAY NOT BE WORKING)
+[] update summarize script to deal with new data structure
+[*] Create summary of pops as we go instead of returning the whole thing.
+[] Check on scoping and try to improve "<<-" call
 [] make all geno effects mean centered?
 [] size dependence for flowering (in sim data and models)
 [] time dependence for flowering (in sim data and models)
@@ -120,8 +123,8 @@ set.seed(888)
 REs <- tibble(group = LETTERS[1:13], re=rnorm(13))
 
 df2 <- tibble(value = rnorm(1000, mean = 10, sd = 1),
-             group = rep_along(value, LETTERS[1:13]),
-             fixef = runif(1000, 0, 1)) %>%
+              group = rep_along(value, LETTERS[1:13]),
+              fixef = runif(1000, 0, 1)) %>%
   left_join(REs, by = "group") %>%
   mutate(y=value*(1+fixef)+re)
 
@@ -361,9 +364,9 @@ plot(size.model.geno.brms, ask = FALSE)
 simpop_timeprep_flowering <- simpop_timeprep %>% filter(week==12, y1surv==1) # don't really need to filter for survival because we have NAs in flowered
 
 flowering.model.geno.brms <- brm(flowered ~ 1 + flowering.logit_geno,
-                             prior = set_prior("normal(0, 2)", class = "b"),
-                             family = bernoulli(), data = simpop_timeprep_flowering,
-                             refresh = 0)
+                                 prior = set_prior("normal(0, 2)", class = "b"),
+                                 family = bernoulli(), data = simpop_timeprep_flowering,
+                                 refresh = 0)
 
 plot(flowering.model.geno.brms, ask=FALSE)
 summary(flowering.model.geno.brms)
@@ -382,7 +385,7 @@ fruit.model.geno.brms <- brm(fruitPerPlant_pheno ~ fruitPerPlant_geno,
                              data = simpop_timeprep_fruit,
                              family = "poisson",
                              refresh = 0
-                             )
+)
 
 plot(fruit.model.geno.brms, ask = FALSE)
 summary(fruit.model.geno.brms)
@@ -508,18 +511,18 @@ pred.surv <- function(d, m.surv) {
 pred.flower <- function(d, m.flower) {
   d.small <- d %>% filter(week == 12, y1surv = TRUE) %>%
     mutate(flowered = { 
-             posterior_predict(m.flower, newdata = pick(Indiv_ID, flowering.logit_geno), ndraws = 1) %>% 
-                 magrittr::extract(1,)
-      }
+      posterior_predict(m.flower, newdata = pick(Indiv_ID, flowering.logit_geno), ndraws = 1) %>% 
+        magrittr::extract(1,)
+    }
     ) %>%
     select(Indiv_ID, flowered) %>%
     right_join(d, by = "Indiv_ID") %>%
     arrange(Indiv_ID, week) %>%
     pull(flowered)
 }
-  
+
 pred.fruit <- function(d, m.fruit) {
-   d %>% filter(week == 12, y1surv = TRUE, flowered==1) %>%
+  d %>% filter(week == 12, y1surv = TRUE, flowered==1) %>%
     mutate(fruitPerPlant_pheno = {
       posterior_predict(m.fruit, newdata = pick(Indiv_ID, fruitPerPlant_geno), ndraws = 1) %>%
         magrittr::extract(1,)        
@@ -574,7 +577,7 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
   # size
   # must go week by week since model depends on size in the previous week
   # maybe should use Weibull and then can do all at once
-
+  
   for(w in 1:(weeks-1)) {
     pred <- pred %>%
       ungroup() %>%
@@ -632,31 +635,50 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
 ```
 
 ```{r}
-# functions are in place
-# need a tibble with 1 row per generation
-# then call calc.geno, then calc.pheno
-
-ngenerations <- 20 # note: 4 seconds per generation
-
-generations <- tibble(gen = 1:ngenerations, seed=list(NULL), pop=list(NULL))
-
-generations$seed[[1]] <- calc.geno(simpop, seedPerFruit = 4)
-
-generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
-
-for(i in 2:ngenerations) {
-  generations$seed[[i]] <- calc.geno(generations$pop[[i-1]], seedPerFruit=4)
-  print(nrow(generations$seed[[i]]))
-  generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
+compute.generations<- function(startingPop, ngenerations = 10, seedPerFruit = 4, summarize = TRUE) {
+  # Function to run a simulation for a given number of generations
+  # can either return a summary of pop stats at each generation,
+  # or every individual in every generation
+  
+  if (summarize) {
+    tmp.pop <- startingPop
+    
+    sim.summary <- map(1:ngenerations, \(gen) {
+      tmp.seed <- calc.geno(tmp.pop, seedPerFruit = seedPerFruit)
+      tmp.pop <<- calc.pheno(tmp.seed) # double arrow updates the global tmp.pop
+      if(nrow(tmp.pop) == 0) return(tibble(popSize=0))
+      tmp.pop %>%
+        summarize(popSize = sum(y1surv, na.rm = TRUE),
+                  across( c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
+                          \(x) mean(x, na.rm = TRUE))
+        ) 
+    }) %>% list_rbind(names_to = "gen")
+    
+  } else {
+    generations <- tibble(gen = 1:ngenerations, seed=list(NULL), pop=list(NULL))
+    
+    generations$seed[[1]] <- calc.geno(startingPop, seedPerFruit = seedPerFruit)
+    
+    generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
+    
+    for(i in 2:ngenerations) {
+      generations$seed[[i]] <- calc.geno(generations$pop[[i-1]], seedPerFruit = seedPerFruit)
+      generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
+    }
+    return(generations)
+  }
+  
 }
-
-# saveRDS(generations, file = here("Sim_Pop", "output", str_c("simpop_", ngenerations, "_gen.Rds")))
-
 ```
 
-Look at trends over time...
-
 ```{r}
+test.sim <- compute.generations(simpop)
+test.sim
+```
+
+
+Look at trends over time for single sim...
+```{r, eval=FALSE}
 # generations <- readRDS("../output/simpop_100_gen.Rds")
 generations %>% select(-seed) %>%
   unnest(pop) %>%
@@ -677,67 +699,34 @@ generations %>% select(-seed) %>%
 
 ```
 
-
 ## process mutliple simulations for each generation
 
 At first I thought I could just pull more draws from a given prediction, but this is incorrect because the input data will be different...
 
 ```{r}
-#ran this on jetstream m3.xl: 32 CPU, 125GB RAM.  
-#if running with full output it will take almost all of the RAM
-# if running with simplify = TRUE for calc.pheno and 16 cores, used ~ 36GB RAM, so a m3.l instance should be okay.
-
-
 nsims <- 100 # number of independent simulations to run
-ngenerations <- 100 # note: 4 seconds per generation
-
-# one simulation per list element
-simulation.list <- map(1:nsims, \(sim) tibble(gen = 1:ngenerations, seed=list(tibble()), pop=list(tibble())))
-
-#walk(simulation.list, \(sim) print(head(sim, 2)))
+ngenerations <- 100 
 
 # Set up parallel processing
-future::plan(future::multisession, workers = 8)
-
-# first generation
-# 180 seconds with 8 cores and simplify = TRUE
-# 190 seconds with 16 cores with simplify = TRUE
-# 290 seconds with 16 cores with simplify = FALSE
-
-system.time({
-simulation.list <- future_map(simulation.list, function(sim) {
-  sim$seed[[1]] <- calc.geno(simpop)
-  sim$pop[[1]] <- calc.pheno(sim$seed[[1]])
-  return(sim)
-}, .options = furrr_options(seed = TRUE, scheduling = 1))
-})
-
-# Loop through all simulations
-# 3680 seconds with 16 processors SIMPLIFY = FALSE (Is this for real?)
-# or 7000 SIMPLIFY = TRUE, surprised but I guess the simplify operations take time.
-# 3824 seconds with 30 processors
-
 future::plan(future::multisession, workers = 15)
 
-system.time({
-  # Run simulations in parallel with improved efficiency
-  simulation.list <- future_map(simulation.list, function(sim) {
-    # Process each generation sequentially
-    for(i in 2:ngenerations) {
-      # Use parent population to generate next generation
-      sim$seed[[i]] <- calc.geno(sim$pop[[i-1]])
-      sim$pop[[i]] <- calc.pheno(sim$seed[[i]])
-    }
-    return(sim)
-  }, .options = furrr_options(seed = TRUE, scheduling = 1),
-  .progress = TRUE)
-})
+sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations),
+                              .id = "sim",
+                              .options = furrr_options( seed = TRUE, scheduling = 1))
 
-# Save all simulations to a single file
-# 3.1 GB file for 100 generations and 100 simulations
-# 1.4 GB with simplify = TRUE
-saveRDS(simulation.list, file = here("Sim_Pop", "output", 
-                                      str_c("simpop_", nsims, "sims_", 
+saveRDS(simulation.summary, file = here("Sim_Pop", "output",
+                                     str_c("simpop_", nsims, "sims_",
                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
+
+
+# Alternative: ALL DATA
+#sim.all.data <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations, summarize = FALSE),
+#                               .id = "sim",
+#                              .options = furrr_options( seed = TRUE, scheduling = 1))
+
+
+# saveRDS(simulation.all.data, file = here("Sim_Pop", "output",
+#                                      str_c("simpop_", nsims, "sims_",
+#                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 ```
 
