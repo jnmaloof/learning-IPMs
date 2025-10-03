@@ -729,7 +729,8 @@ system.time({
       sim$pop[[i]] <- calc.pheno(sim$seed[[i]])
     }
     return(sim)
-  }, .options = furrr_options(seed = TRUE, scheduling = 1))
+  }, .options = furrr_options(seed = TRUE, scheduling = 1),
+  .progress = TRUE)
 })
 
 # Save all simulations to a single file
