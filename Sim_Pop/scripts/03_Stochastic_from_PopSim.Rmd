@@ -717,7 +717,7 @@ sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = 
 })
 
 saveRDS(sim.summary, file = here("Sim_Pop", "output",
-                                     str_c("simpop_", nsims, "sims_",
+                                     str_c("simpop_summary_", nsims, "sims_",
                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 
 
@@ -727,7 +727,7 @@ saveRDS(sim.summary, file = here("Sim_Pop", "output",
 #                              .options = furrr_options( seed = TRUE, scheduling = 1))
 
 
-# saveRDS(simulation.all.data, file = here("Sim_Pop", "output",
+# saveRDS(simulation.all.data, file = here("Sim_Pop_all_", "output",
 #                                      str_c("simpop_", nsims, "sims_",
 #                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 ```
