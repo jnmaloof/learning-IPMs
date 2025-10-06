@@ -1,0 +1,42 @@
+---
+title: "04_Analyze_Stochastic_Models"
+author: "Julin Maloof"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This script is set up to handle the new data structure that contains summaries of each generation, rather than all of the data.
+
+```{r}
+library(tidyverse)
+library(patchwork)
+library(here)
+plan(multisession(workers=4))
+```
+
+
+```{r}
+sim.summary <- readRDS(here("Sim_Pop" , "output", "simpop_summary_100sims_100gen_2025-10-03.Rds"))
+head(sim.summary)
+```
+
+```{r, fig.height=7, fig.width=9}
+sim.summary %>%
+  pivot_longer(-c(sim, gen), names_to = "trait", values_to = "value") %>%
+  ggplot(aes(x=gen, y=value)) +
+  geom_line(alpha=.05, aes(group=sim)) +
+  geom_smooth(se = FALSE) +
+  facet_wrap(~trait, scales="free_y")
+```
+
+```{r}
+sim.summary %>%
+  ggplot(aes(x=gen, y=popSize)) +
+  geom_line(alpha=.1, aes(group=sim)) +
+  geom_smooth(se = FALSE)
+```
+

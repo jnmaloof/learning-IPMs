@@ -15,9 +15,10 @@ TODOs
 [*] handle population demise gracefully rather than throwing an error
 [*] FruitPerPlant should be an integer
 [*] size of next gen depends on amount of fruit/seed made in this generation
-[] CHECK/FIX POPSIZE CALCUALTION IN SCRIPT 4 (IF SIZE = 0 MAY NOT BE WORKING)
-[] update summarize script to deal with new data structure
+[*] CHECK/FIX POPSIZE CALCUALTION IN SCRIPT 4 (IF SIZE = 0 MAY NOT BE WORKING)
+[*] update summarize script to deal with new data structure
 [*] Create summary of pops as we go instead of returning the whole thing.
+[] 100 starting pops?  Or okay to start with 1?
 [] Check on scoping and try to improve "<<-" call
 [] make all geno effects mean centered?
 [] size dependence for flowering (in sim data and models)
@@ -671,12 +672,6 @@ compute.generations<- function(startingPop, ngenerations = 10, seedPerFruit = 4,
 }
 ```
 
-```{r}
-test.sim <- compute.generations(simpop)
-test.sim
-```
-
-
 Look at trends over time for single sim...
 ```{r, eval=FALSE}
 # generations <- readRDS("../output/simpop_100_gen.Rds")
@@ -720,15 +715,22 @@ saveRDS(sim.summary, file = here("Sim_Pop", "output",
                                      str_c("simpop_summary_", nsims, "sims_",
                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 
-
-# Alternative: ALL DATA
-#sim.all.data <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations, summarize = FALSE),
-#                               .id = "sim",
-#                              .options = furrr_options( seed = TRUE, scheduling = 1))
-
-
-# saveRDS(simulation.all.data, file = here("Sim_Pop_all_", "output",
-#                                      str_c("simpop_", nsims, "sims_",
-#                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 ```
 
+Alternative if you want all data
+```{r, eval = FALSE}
+# NOTE: DO NOT TRY THIS ON YOUR LAPTOP IF YOU RUN A LOT OF SIMS AND GENERATIONS.  YOU'LL NEED 50+ GB OF RAM FOR 100 SIMS OF 100 GENERATIONS
+nsims <- 7 # low for testing purposes
+ngenerations <- 10 # low for testing purposes
+
+future::plan(future::multisession, workers = 7)
+
+sim.all.data <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations, summarize = FALSE),
+                               .id = "sim",
+                              .options = furrr_options( seed = TRUE, scheduling = 1))
+
+
+ saveRDS(sim.all.data, file = here("Sim_Pop", "output",
+                                      str_c("simpop_all_", nsims, "sims_",
+                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
+```

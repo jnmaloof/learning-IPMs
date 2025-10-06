@@ -9,6 +9,8 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+This script is set up to handle the "old" data structure that contains all individuals in all generations.  See script 04_new_... for processing summary files.  Also this script may need minor updates to handle the current version of the "old" data structure.
+
 ```{r}
 library(tidyverse)
 library(patchwork)
@@ -18,35 +20,20 @@ library(furrr)
 plan(multisession(workers=4))
 ```
 
+
 ```{r}
 #mem.maxVSize(36000)
-simulation.list <- readRDS(here("Sim_Pop" , "output", "simpop_100sims_100gen_2025-09-29.Rds"))
-```
-
-currently only keep last week of data from sims so this isn't needed
-```{r, eval = FALSE}
-#92 seconds
-system.time({
-simulation.list.small <- future_map(simulation.list, function(sim) {
-  sim <- sim %>% select(-seed) %>%
-    mutate(pop = map(pop, \(x) filter(x, week==max(week)))) 
-},
-  .options = furrr_options(seed = TRUE) ) 
-})
-rm(simulation.list)
+sims.df <- readRDS(here("Sim_Pop" , "output", "simpop_all_7sims_10gen_2025-10-06.Rds"))
 ```
 
 ```{r}
-system.time(
- # sims.df <- bind_rows(simulation.list.small, .id = "sim")
-    sims.df <- bind_rows(simulation.list, .id = "sim")
-
-)
-
-rm(simulation.list)
-
 # this takes a lot longer than system.time() reports for some reason
-system.time(sims.df <- sims.df %>% unnest(pop))
+system.time({sims.df <- sims.df %>% 
+              select(-seed) %>% 
+              unnest(pop) %>%
+              select(-ends_with("_geno"))
+})
+  
 
 head(sims.df)
 ```
@@ -63,10 +50,12 @@ sims.summary <- sims.df %>%
         .groups = "drop"
       )
 })
-sims.summary
-```
-```{r}
-summary(sims.summary)
+
+# fill in popSize = 0 where there is missing data
+sims.summary <- sims.summary %>% 
+  expand(sim, gen) %>% 
+  left_join(sims.summary) %>%
+  mutate(popSize = replace_na(popSize, 0))
 ```
 
 ```{r, fig.height=7, fig.width=9}
@@ -81,7 +70,7 @@ sims.summary %>%
 ```{r}
 sims.summary %>%
   ggplot(aes(x=gen, y=popSize)) +
-  geom_line(alpha=.05, aes(group=sim)) +
+  geom_line(alpha=.1, aes(group=sim)) +
   geom_smooth(se = FALSE)
 ```
 
