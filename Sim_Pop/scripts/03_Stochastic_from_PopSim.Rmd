@@ -24,7 +24,7 @@ TODOs
 [] time dependence for flowering (in sim data and models)
 [] size dependence for fruit per plant (in sim data and models)
 [] possible time dependence for fruit per plant (in sim data and models)
-[] recombination / more intellegent handling of genotypic effects in mating
+[] recombination / more intelligent handling of genotypic effects in mating
 
 I am modifying Brandie's script to work on stochastic simulations (as an alternative to the matrices)
 
