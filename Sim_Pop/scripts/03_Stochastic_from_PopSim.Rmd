@@ -710,12 +710,14 @@ ngenerations <- 100
 # Set up parallel processing
 future::plan(future::multisession, workers = 15)
 
+system.time({
 sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations),
                               .id = "sim",
                               .options = furrr_options( seed = TRUE, scheduling = 1))
+})
 
-saveRDS(simulation.summary, file = here("Sim_Pop", "output",
-                                     str_c("simpop_", nsims, "sims_",
+saveRDS(sim.summary, file = here("Sim_Pop", "output",
+                                     str_c("simpop_summary_", nsims, "sims_",
                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 
 
@@ -725,7 +727,7 @@ saveRDS(simulation.summary, file = here("Sim_Pop", "output",
 #                              .options = furrr_options( seed = TRUE, scheduling = 1))
 
 
-# saveRDS(simulation.all.data, file = here("Sim_Pop", "output",
+# saveRDS(simulation.all.data, file = here("Sim_Pop_all_", "output",
 #                                      str_c("simpop_", nsims, "sims_",
 #                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
 ```
