@@ -13,7 +13,7 @@ TODOs
 [*] add reproductive output models
 [*] incorporate reproductive output into mating
 [*] handle population demise gracefully rather than throwing an error
-[*] FruitPerPlant should be an integer
+[*] FruitPerPlant should be an integer (model as Poisson)
 [*] size of next gen depends on amount of fruit/seed made in this generation
 [*] CHECK/FIX POPSIZE CALCUALTION IN SCRIPT 4 (IF SIZE = 0 MAY NOT BE WORKING)
 [*] update summarize script to deal with new data structure
