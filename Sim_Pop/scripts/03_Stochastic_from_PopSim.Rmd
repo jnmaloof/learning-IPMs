@@ -142,12 +142,12 @@ newdata2$pred.gaus <- posterior_predict(test.model2, newdata = newdata2, ndraws 
 
 pl1 <- df2 %>% ggplot(aes(x=fixef, y = y)) +
   geom_point() +
-  geom_smooth() +
+  geom_smooth(aes(color=group), se = FALSE, lwd=1, method = "lm")
   ggtitle("original")
 
 pl2 <- newdata2 %>% ggplot(aes(x=fixef, y = pred.gaus)) +
   geom_point() +
-  geom_smooth() +
+  geom_smooth(aes(color=group), se = FALSE, lwd=1, method = "lm")
   ggtitle("brms generated")
 
 pl1 + pl2
@@ -166,7 +166,7 @@ names(simpop)
 #elapsed_weeks = interval between weeks - should all be 1 in this data
 ```
 
-### Add size next
+### Data prep
 ```{r}
 unique(simpop$established) #NA = did not germinate, 1 = established (survived first 3 weeks in field); 0 = did not establish
 unique(simpop$y1surv) #NA = did not establish, 1 = survived to week 12; 0 = did not survive 
@@ -225,15 +225,6 @@ simpop_timeprep_surv_scaled %>% #not better
 ## germination model
 
 ```{r}
-germ.model.pheno.glm <- glm(germinated ~ 1, family = binomial(), data = simpop_timeprep_germ)
-summary(germ.model.pheno.glm)
-germ.model.geno.glm <- glm(germinated ~ germination.logit_geno, family = binomial, data = simpop_timeprep_germ)
-summary(germ.model.geno.glm)
-```
-
-#### brms
-
-```{r}
 germ.model.pheno.brms <- brm(germinated ~ 1, 
                              family = bernoulli(), data = simpop_timeprep_germ,
                              refresh = 0)
@@ -244,26 +235,7 @@ germ.model.geno.brms <- brm(germinated ~ 1 + germination.logit_geno,
                             family = bernoulli(), data = simpop_timeprep_germ,
                             refresh = 0)
 summary(germ.model.geno.brms)
-```
-
-
-```{r}
-germ.predict.df <- simpop_timeprep_germ %>%
-  mutate(pheno.glm = predict(germ.model.pheno.glm, type = "response"),
-         geno.glm = predict(germ.model.geno.glm, type = "response" ),
-         pheno.brm = posterior_predict(germ.model.pheno.brms, type = "response", ndraws=1)[1,],
-         geno.brm = posterior_predict(germ.model.geno.brms, type = "response", ndraws = 1)[1,]
-  )
-
-germ.predict.df
-```
-```{r}
-germ.predict.df %>%
-  mutate(germination.logit_geno_scale = scale(germination.logit_geno)) %>%
-  pivot_longer(cols = pheno.glm:geno.brm) %>%
-  ggplot(aes(x=germination.logit_geno_scale, y = value, color = name)) +
-  geom_point() +
-  facet_wrap(~ name)
+plot(germ.model.geno.brms, ask = FALSE)
 ```
 
 
@@ -574,10 +546,20 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
                           NA),  # didn't germinate or not week 1) 
            size_next = NA)
   
-  if(max(pred$germinated,na.rm = TRUE) == 0 || max(pred$established, na.rm = TRUE) == 0 ) {
-    return(pred) # don't try to calcualte later phenotypes if no plants germinated or establisthed
+  if(max(pred$germinated,na.rm = TRUE) == 0 || 
+     all(is.na(pred$established)) || 
+     max(pred$established, na.rm = TRUE) == 0 ) {
+    pred <- pred %>% mutate(y1surv = 0,
+                            flowered = NA,
+                            fruitPerPlant_pheno = NA)
+    if(simplify==TRUE) {
+      pred <- pred %>%
+        filter(week==max(week)) %>%
+        select(-beta, -week_next, -elapsed_weeks, -size_next)
+    }
+    return(pred) # don't try to calculate later phenotypes if no plants germinated or established
   }
-
+  
   # size
   # must go week by week since model depends on size in the previous week
   # maybe should use Weibull and then can do all at once
@@ -682,28 +664,6 @@ compute.generations<- function(startingPop, ngenerations = 10, seedPerFruit = 4,
 }
 ```
 
-Look at trends over time for single sim...
-```{r, eval=FALSE}
-# generations <- readRDS("../output/simpop_100_gen.Rds")
-generations %>% select(-seed) %>%
-  unnest(pop) %>%
-  filter(week==max(week)) %>% # get year-end info
-  group_by(gen) %>%
-  summarize(n = n(), across(c(germinated, established, y1surv), \(x) mean(x, na.rm = TRUE))) %>%
-  pivot_longer(-gen, names_to = "trait", values_to = "proportion") %>%
-  ggplot(aes(x=gen, y= proportion, color = trait)) +
-  geom_line()
-
-generations %>% select(-seed) %>%
-  unnest(pop) %>%
-  filter(week==max(week)) %>% # get year-end info
-  group_by(gen) %>%
-  summarize(size = mean(size, na.rm = TRUE)) %>%
-  ggplot(aes(x=gen, y= size)) +
-  geom_line()
-
-```
-
 ## process mutliple simulations for each generation
 
 At first I thought I could just pull more draws from a given prediction, but this is incorrect because the input data will be different...
@@ -715,9 +675,9 @@ ngenerations <- 100
 # Set up parallel processing
 # future::plan(future::multisession, workers = 15)
 
-future::plan(future::multisession, workers = 6) #Testing on my laptop...
+future::plan(future::multisession, workers = 6) #for laptop...
 
-
+# 80 minutes on laptop
 system.time({
   sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations),
                                 .id = "sim",
@@ -729,6 +689,7 @@ saveRDS(sim.summary, file = here("Sim_Pop", "output",
                                        ngenerations, "gen_", Sys.Date(), ".Rds")))
 
 ```
+
 
 Alternative if you want all data
 ```{r, eval = FALSE}
@@ -747,28 +708,7 @@ saveRDS(sim.all.data, file = here("Sim_Pop", "output",
                                   str_c("simpop_all_", nsims, "sims_",
                                         ngenerations, "gen_", Sys.Date(), ".Rds")))
 ```
-trying to troubleshoot
-```{r, eval=TRUE}
-for(i in 1:1000) {
-  print(str_c("i: ",i))
-  tmp.pop <- simpop
-  for(j in 1:20){
-    tmp.seed <- calc.geno(tmp.pop, seedPerFruit = seedPerFruit)
-    tmp.pop <<- calc.pheno(tmp.seed) # double arrow updates the global tmp.pop
-    if(nrow(tmp.pop) == 0) next
-    x <- tmp.pop %>%
-      summarize(popSize = sum(y1surv, na.rm = TRUE),
-                across( c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
-                        \(x) mean(x, na.rm = TRUE))
-      ) 
-  }
-}
 
 
-# for(i in 1:100) {
-#   print(i)
-#         tmp.pop <<- calc.pheno(tmp.seed) # double arrow updates the global tmp.pop
-# 
-# }
-```
+
 
