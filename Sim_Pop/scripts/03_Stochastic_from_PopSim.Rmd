@@ -19,7 +19,9 @@ TODOs
 [*] update summarize script to deal with new data structure
 [*] Create summary of pops as we go instead of returning the whole thing.
 [*] Standardize function names
+[] record number of seed at each generation
 [] Standardize data / column names
+[] Maternal parent should be based on seed, not probability
 [] 100 starting pops?  Or okay to start with 1?
 [] Check on scoping and try to improve "<<-" call
 [] make all geno effects mean centered?
@@ -27,7 +29,9 @@ TODOs
 [] time dependence for flowering (in sim data and models)
 [] size dependence for fruit per plant (in sim data and models)
 [] possible time dependence for fruit per plant (in sim data and models)
+[] time dependent mating (can only mate with plants flowering at same time)
 [] recombination / more intelligent handling of genotypic effects in mating
+[] when we have SNPs, keep track of allele frequencies at the QTL in each generation
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
@@ -709,6 +713,14 @@ calc_generations <- function(startingPop, ngenerations = 10, seedPerFruit = 4, s
 ## process mutliple simulations for each generation
 
 At first I thought I could just pull more draws from a given prediction, but this is incorrect because the input data will be different...
+
+```{r}
+# run small
+nsims <- 10
+ngenerations <- 10
+calc_generations(startingPop = simpop, ngenerations = ngenerations)
+```
+
 
 ```{r}
 nsims <- 100 # number of independent simulations to run
