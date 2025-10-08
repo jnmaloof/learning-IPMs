@@ -574,31 +574,41 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
                           NA),  # didn't germinate or not week 1) 
            size_next = NA)
   
-  
+  if(max(pred$germinated,na.rm = TRUE) == 0 | max(pred$established, na.rm = TRUE) == 0 ) {
+    return(pred) # don't try to calcualte later phenotypes if no plants germinated or establisthed
+  }
+
   # size
   # must go week by week since model depends on size in the previous week
   # maybe should use Weibull and then can do all at once
   
   for(w in 1:(weeks-1)) {
-    pred <- pred %>%
-      ungroup() %>%
-      filter(week == w) %>%
-      arrange(Indiv_ID) %>%
-      mutate(size_next =  if_else(established==1,
-                                  pred.size(cbind(pick(Indiv_ID, size, k_geno), week), m.size=m.size),
-                                  NA)) %>% # didn't establish
-      select(Indiv_ID, week, size_next) %>%
-      right_join(pred, by = c("Indiv_ID", "week")) %>%
-      arrange(Indiv_ID, week) %>%
-      mutate(size_next = coalesce(size_next.y, size_next.x)) %>%
-      select(-any_of(c("size_next.y", "size_next.x"))) %>%
-      rowwise() %>%
-      mutate(size_next=max(size, size_next)) %>% # don't shrink
-      group_by(Indiv_ID) %>%
-      mutate(size = ifelse(week == (w+1), lag(size_next, order_by = week), size)) %>%
-      ungroup()
+    tryCatch({
+      pred <- pred %>%
+        ungroup() %>%
+        filter(week == w) %>%
+        arrange(Indiv_ID) %>%
+        mutate(size_next =  if_else(established==1,
+                                    pred.size(cbind(pick(Indiv_ID, size, k_geno), week), m.size=m.size),
+                                    NA)) %>% # didn't establish
+        select(Indiv_ID, week, size_next) %>%
+        right_join(pred, by = c("Indiv_ID", "week")) %>%
+        arrange(Indiv_ID, week) %>%
+        mutate(size_next = coalesce(size_next.y, size_next.x)) %>%
+        select(-any_of(c("size_next.y", "size_next.x"))) %>%
+        rowwise() %>%
+        mutate(size_next=max(size, size_next)) %>% # don't shrink
+        group_by(Indiv_ID) %>%
+        mutate(size = ifelse(week == (w+1), lag(size_next, order_by = week), size)) %>%
+        ungroup()
+      ####
+    },
+    error = function(e) {
+      cat("Caught error:", e$message, "\n")
+      recover() 
+    })
+    ###
   }
-  
   
   # survival
   pred <- pred %>%
@@ -703,17 +713,20 @@ nsims <- 100 # number of independent simulations to run
 ngenerations <- 100 
 
 # Set up parallel processing
-future::plan(future::multisession, workers = 15)
+# future::plan(future::multisession, workers = 15)
+
+future::plan(future::multisession, workers = 6) #Testing on my laptop...
+
 
 system.time({
-sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations),
-                              .id = "sim",
-                              .options = furrr_options( seed = TRUE, scheduling = 1))
+  sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations),
+                                .id = "sim",
+                                .options = furrr_options( seed = TRUE, scheduling = 1))
 })
 
 saveRDS(sim.summary, file = here("Sim_Pop", "output",
-                                     str_c("simpop_summary_", nsims, "sims_",
-                                           ngenerations, "gen_", Sys.Date(), ".Rds")))
+                                 str_c("simpop_summary_", nsims, "sims_",
+                                       ngenerations, "gen_", Sys.Date(), ".Rds")))
 
 ```
 
@@ -727,10 +740,35 @@ future::plan(future::multisession, workers = 7)
 
 sim.all.data <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations, summarize = FALSE),
                                .id = "sim",
-                              .options = furrr_options( seed = TRUE, scheduling = 1))
+                               .options = furrr_options( seed = TRUE, scheduling = 1))
 
 
- saveRDS(sim.all.data, file = here("Sim_Pop", "output",
-                                      str_c("simpop_all_", nsims, "sims_",
-                                            ngenerations, "gen_", Sys.Date(), ".Rds")))
+saveRDS(sim.all.data, file = here("Sim_Pop", "output",
+                                  str_c("simpop_all_", nsims, "sims_",
+                                        ngenerations, "gen_", Sys.Date(), ".Rds")))
 ```
+trying to troubleshoot
+```{r, eval=TRUE}
+for(i in 1:1000) {
+  print(str_c("i: ",i))
+  tmp.pop <- simpop
+  for(j in 1:20){
+    tmp.seed <- calc.geno(tmp.pop, seedPerFruit = seedPerFruit)
+    tmp.pop <<- calc.pheno(tmp.seed) # double arrow updates the global tmp.pop
+    if(nrow(tmp.pop) == 0) next
+    x <- tmp.pop %>%
+      summarize(popSize = sum(y1surv, na.rm = TRUE),
+                across( c(germinated, established, y1surv, size, flowered, fruitPerPlant_pheno), 
+                        \(x) mean(x, na.rm = TRUE))
+      ) 
+  }
+}
+
+
+# for(i in 1:100) {
+#   print(i)
+#         tmp.pop <<- calc.pheno(tmp.seed) # double arrow updates the global tmp.pop
+# 
+# }
+```
+
