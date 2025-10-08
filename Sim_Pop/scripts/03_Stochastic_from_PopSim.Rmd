@@ -240,58 +240,58 @@ simpop_timeprep_surv_scaled %>% # not better
 ## germination model
 
 ```{r}
-germ.model.pheno <- brm(germinated ~ 1,
+germ_model_pheno <- brm(germinated ~ 1,
   family = bernoulli(), data = simpop_timeprep_germ,
   refresh = 0
 )
-summary(germ.model.pheno)
+summary(germ_model_pheno)
 
-germ.model.geno <- brm(germinated ~ 1 + germination.logit_geno,
+germ_model_geno <- brm(germinated ~ 1 + germination.logit_geno,
   prior = set_prior("normal(0, 2)", class = "b"),
   family = bernoulli(), data = simpop_timeprep_germ,
   refresh = 0
 )
-summary(germ.model.geno)
-plot(germ.model.geno, ask = FALSE)
+summary(germ_model_geno)
+plot(germ_model_geno, ask = FALSE)
 ```
 
 
 ## Estab models
 
 ```{r}
-estab.model.pheno <- brm(established ~ 1,
+estab_model_pheno <- brm(established ~ 1,
   family = bernoulli(), data = simpop_timeprep_estab,
   refresh = 0
 )
-summary(estab.model.pheno)
+summary(estab_model_pheno)
 
-estab.model.geno <- brm(established ~ 1 + establishment.logit_geno,
+estab_model_geno <- brm(established ~ 1 + establishment.logit_geno,
   prior = set_prior("normal(0, 2)", class = "b"),
   family = bernoulli(), data = simpop_timeprep_estab,
   refresh = 0
 )
 
-plot(estab.model.geno, ask = FALSE)
-summary(estab.model.geno)
+plot(estab_model_geno, ask = FALSE)
+summary(estab_model_geno)
 ```
 
 ## Survival Models
 
 ### Phenos Only
 ```{r}
-surv.model.pheno <- brm(alive_next ~ size.scale + (1 | Indiv_ID), # + I(size.scale^2),
+surv_model_pheno <- brm(alive_next ~ size.scale + (1 | Indiv_ID), # + I(size.scale^2),
   prior = set_prior("normal(0, 10)", class = "b"),
   family = bernoulli(), data = simpop_timeprep_surv,
   cores = 4, refresh = 0
 )
 
-plot(surv.model.pheno, ask = FALSE)
-summary(surv.model.pheno)
+plot(surv_model_pheno, ask = FALSE)
+summary(surv_model_pheno)
 ```
 
 
 ```{r}
-surv.model.geno <- brm(alive_next ~ size.scale + y1surv.logit_geno + (1 | Indiv_ID), # , + I(size.scale^2)
+surv_model_geno <- brm(alive_next ~ size.scale + y1surv.logit_geno + (1 | Indiv_ID), # , + I(size.scale^2)
   prior = set_prior("normal(0, 2)", class = "b"),
   family = bernoulli(),
   data = simpop_timeprep_surv,
@@ -300,8 +300,8 @@ surv.model.geno <- brm(alive_next ~ size.scale + y1surv.logit_geno + (1 | Indiv_
   control = list(adapt_delta = .95)
 )
 
-plot(surv.model.geno, ask = FALSE)
-summary(surv.model.geno)
+plot(surv_model_geno, ask = FALSE)
+summary(surv_model_geno)
 ```
 
 
@@ -322,7 +322,7 @@ simpop_timeprep_size %>%
 ### Phenos Only
 
 ```{r}
-size.model.pheno <- brm(size_next ~ 0 + size + week + (0 + size | Indiv_ID),
+size_model_pheno <- brm(size_next ~ 0 + size + week + (0 + size | Indiv_ID),
   prior = set_prior("normal(0, 2)", class = "b"),
   data = simpop_timeprep_size,
   cores = 4,
@@ -330,26 +330,26 @@ size.model.pheno <- brm(size_next ~ 0 + size + week + (0 + size | Indiv_ID),
   refresh = 0
 )
 
-summary(size.model.pheno)
+summary(size_model_pheno)
 
-plot(size.model.pheno, ask = FALSE)
+plot(size_model_pheno, ask = FALSE)
 
-pairs(size.model.pheno)
+pairs(size_model_pheno)
 ```
 
 ### Geno
 should also test without week.
 ```{r}
-size.model.geno <- brm(size_next ~ 0 + size + week + k_geno + (0 + size | Indiv_ID),
+size_model_geno <- brm(size_next ~ 0 + size + week + k_geno + (0 + size | Indiv_ID),
   prior = set_prior("normal(0, 2)", class = "b"),
   data = simpop_timeprep_size,
   cores = 4,
   refresh = 0
 )
 
-summary(size.model.geno)
+summary(size_model_geno)
 
-plot(size.model.geno, ask = FALSE)
+plot(size_model_geno, ask = FALSE)
 ```
 ## flowering
 
@@ -359,14 +359,14 @@ plot(size.model.geno, ask = FALSE)
 
 simpop_timeprep_flowering <- simpop_timeprep %>% filter(week == 12, y1surv == 1) # don't really need to filter for survival because we have NAs in flowered
 
-flowering.model.geno <- brm(flowered ~ 1 + flowering.logit_geno,
+flowering_model_geno <- brm(flowered ~ 1 + flowering.logit_geno,
   prior = set_prior("normal(0, 2)", class = "b"),
   family = bernoulli(), data = simpop_timeprep_flowering,
   refresh = 0
 )
 
-plot(flowering.model.geno, ask = FALSE)
-summary(flowering.model.geno)
+plot(flowering_model_geno, ask = FALSE)
+summary(flowering_model_geno)
 ```
 
 ## fruit
@@ -377,15 +377,15 @@ summary(flowering.model.geno)
 
 simpop_timeprep_fruit <- simpop_timeprep %>% filter(week == 12, y1surv == 1, flowered == 1)
 
-fruit.model.geno <- brm(fruitPerPlant_pheno ~ fruitPerPlant_geno,
+fruit_model_geno <- brm(fruitPerPlant_pheno ~ fruitPerPlant_geno,
   prior = set_prior("normal(0,2", class = "b"),
   data = simpop_timeprep_fruit,
   family = "poisson",
   refresh = 0
 )
 
-plot(fruit.model.geno, ask = FALSE)
-summary(fruit.model.geno)
+plot(fruit_model_geno, ask = FALSE)
+summary(fruit_model_geno)
 ```
 
 
@@ -406,7 +406,7 @@ Steps:
 ### mating and next generation
 ```{r}
 # This code was not efficient and has been replaced
-# calc.geno <- function(pop, size = 2000) {
+# calc_geno <- function(pop, size = 2000) {
 #   pop <- pop %>% ungroup() %>%
 #     filter(y1surv==1, week==1) %>% # week doesn't matter but need to reduce to 1 row per individual
 #     select(ends_with("geno"))
@@ -418,7 +418,7 @@ Steps:
 # }
 
 # longer coding but much, much faster
-calc.geno <- function(pop, seedPerFruit = 15, maxSeed = 5000) {
+calc_geno <- function(pop, seedPerFruit = 15, maxSeed = 5000) {
   if (nrow(pop) == 0) {
     return(pop)
   } # population is extinct, return empty data frame
@@ -478,11 +478,11 @@ calc.geno <- function(pop, seedPerFruit = 15, maxSeed = 5000) {
 
 ### prediction of phenotypes
 ```{r}
-pred.size <- function(d, m.size) {
+predict_size <- function(d, m_size) {
   d %>%
     drop_na(size) %>%
     mutate(size_next = {
-      posterior_predict(m.size, newdata = cbind(pick(k_geno, size, Indiv_ID), week), ndraws = 1, allow_new_levels = TRUE) %>%
+      posterior_predict(m_size, newdata = cbind(pick(k_geno, size, Indiv_ID), week), ndraws = 1, allow_new_levels = TRUE) %>%
         magrittr::extract(1, )
     }) %>%
     select(Indiv_ID, size_next, week) %>%
@@ -491,11 +491,11 @@ pred.size <- function(d, m.size) {
     pull(size_next)
 }
 
-pred.surv <- function(d, m.surv) {
+predict_survival <- function(d, m_surv) {
   d %>%
     drop_na(size.scale) %>%
     mutate(alive_next = {
-      posterior_predict(m.surv, newdata = pick(Indiv_ID, size.scale, y1surv.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
+      posterior_predict(m_surv, newdata = pick(Indiv_ID, size.scale, y1surv.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
         magrittr::extract(1, )
     }) %>%
     select(Indiv_ID, alive_next, week) %>%
@@ -504,11 +504,11 @@ pred.surv <- function(d, m.surv) {
     pull(alive_next)
 }
 
-pred.flower <- function(d, m.flower) {
+predict_flowering <- function(d, m_flower) {
   d.small <- d %>%
     filter(week == 12, y1surv = TRUE) %>%
     mutate(flowered = {
-      posterior_predict(m.flower, newdata = pick(Indiv_ID, flowering.logit_geno), ndraws = 1) %>%
+      posterior_predict(m_flower, newdata = pick(Indiv_ID, flowering.logit_geno), ndraws = 1) %>%
         magrittr::extract(1, )
     }) %>%
     select(Indiv_ID, flowered) %>%
@@ -517,11 +517,11 @@ pred.flower <- function(d, m.flower) {
     pull(flowered)
 }
 
-pred.fruit <- function(d, m.fruit) {
+predict_fruit <- function(d, m_fruit) {
   d %>%
     filter(week == 12, y1surv = TRUE, flowered == 1) %>%
     mutate(fruitPerPlant_pheno = {
-      posterior_predict(m.fruit, newdata = pick(Indiv_ID, fruitPerPlant_geno), ndraws = 1) %>%
+      posterior_predict(m_fruit, newdata = pick(Indiv_ID, fruitPerPlant_geno), ndraws = 1) %>%
         magrittr::extract(1, )
     }) %>%
     select(Indiv_ID, fruitPerPlant_pheno) %>%
@@ -533,7 +533,7 @@ pred.fruit <- function(d, m.fruit) {
 
 
 ```{r}
-calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.geno, m.estab = estab.model.geno, m.size = size.model.geno, m.surv = surv.model.geno, m.flower = flowering.model.geno, m.fruit = fruit.model.geno, simplify = TRUE) {
+calc_pheno <- function(pop, weeks = 12, estab.weeks = 3, m_germ = germ_model_geno, m_estab = estab_model_geno, m_size = size_model_geno, m_surv = surv_model_geno, m_flower = flowering_model_geno, m_fruit = fruit_model_geno, simplify = TRUE) {
   if (nrow(pop) == 0) {
     return(pop)
   } # if pop is 0, keep it at 0
@@ -542,13 +542,13 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
     # germination, establishment, beta (initial size)
     mutate(
       germinated = {
-        posterior_predict(m.germ, newdata = pick(Indiv_ID, germination.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
+        posterior_predict(m_germ, newdata = pick(Indiv_ID, germination.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
           magrittr::extract(1, ) # note: no need to go to rbinom(), already outputting 0s and 1s
       },
       established =
         ifelse(germinated,
           {
-            posterior_predict(m.estab, newdata = pick(Indiv_ID, establishment.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
+            posterior_predict(m_estab, newdata = pick(Indiv_ID, establishment.logit_geno), ndraws = 1, allow_new_levels = TRUE) %>%
               magrittr::extract(1, )
           },
           NA
@@ -603,7 +603,7 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
           filter(week == w) %>%
           arrange(Indiv_ID) %>%
           mutate(size_next = if_else(established == 1,
-            pred.size(cbind(pick(Indiv_ID, size, k_geno), week), m.size = m.size),
+            predict_size(cbind(pick(Indiv_ID, size, k_geno), week), m_size = m_size),
             NA
           )) %>% # didn't establish
           select(Indiv_ID, week, size_next) %>%
@@ -632,7 +632,7 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
     mutate(
       size.scale = as.numeric(scale(size, scale = diff(range(size, na.rm = TRUE)))),
       alive_next = ifelse(established & week > 2,
-        pred.surv(cbind(pick(Indiv_ID, size.scale, y1surv.logit_geno), week), m.surv = m.surv),
+        predict_survival(cbind(pick(Indiv_ID, size.scale, y1surv.logit_geno), week), m_surv = m_surv),
         established
       )
     ) %>%
@@ -652,8 +652,8 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
   pred <- pred %>%
     arrange(Indiv_ID, week) %>% # just to be safe
     mutate(
-      flowered = pred.flower(pick(Indiv_ID, flowering.logit_geno, week, y1surv), m.flower = flowering.model.geno),
-      fruitPerPlant_pheno = pred.fruit(pick(Indiv_ID, fruitPerPlant_geno, week, flowered), m.fruit = fruit.model.geno)
+      flowered = predict_flowering(pick(Indiv_ID, flowering.logit_geno, week, y1surv), m_flower = flowering_model_geno),
+      fruitPerPlant_pheno = predict_fruit(pick(Indiv_ID, fruitPerPlant_geno, week, flowered), m_fruit = fruit_model_geno)
     )
 
   if (simplify == TRUE) {
@@ -667,7 +667,7 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
 ```
 
 ```{r}
-compute.generations <- function(startingPop, ngenerations = 10, seedPerFruit = 4, summarize = TRUE) {
+calc_generations <- function(startingPop, ngenerations = 10, seedPerFruit = 4, summarize = TRUE) {
   # Function to run a simulation for a given number of generations
   # can either return a summary of pop stats at each generation,
   # or every individual in every generation
@@ -675,9 +675,9 @@ compute.generations <- function(startingPop, ngenerations = 10, seedPerFruit = 4
   if (summarize) {
     tmp.pop <- startingPop
 
-    sim.summary <- map(1:ngenerations, \(gen) {
-      tmp.seed <- calc.geno(tmp.pop, seedPerFruit = seedPerFruit)
-      tmp.pop <<- calc.pheno(tmp.seed) # double arrow updates the global tmp.pop
+    sim_summary <- map(1:ngenerations, \(gen) {
+      tmp.seed <- calc_geno(tmp.pop, seedPerFruit = seedPerFruit)
+      tmp.pop <<- calc_pheno(tmp.seed) # double arrow updates the global tmp.pop
       if (nrow(tmp.pop) == 0) {
         return(tibble(popSize = 0))
       }
@@ -693,13 +693,13 @@ compute.generations <- function(startingPop, ngenerations = 10, seedPerFruit = 4
   } else {
     generations <- tibble(gen = 1:ngenerations, seed = list(NULL), pop = list(NULL))
 
-    generations$seed[[1]] <- calc.geno(startingPop, seedPerFruit = seedPerFruit)
+    generations$seed[[1]] <- calc_geno(startingPop, seedPerFruit = seedPerFruit)
 
-    generations$pop[[1]] <- calc.pheno(generations$seed[[1]])
+    generations$pop[[1]] <- calc_pheno(generations$seed[[1]])
 
     for (i in 2:ngenerations) {
-      generations$seed[[i]] <- calc.geno(generations$pop[[i - 1]], seedPerFruit = seedPerFruit)
-      generations$pop[[i]] <- calc.pheno(generations$seed[[i]])
+      generations$seed[[i]] <- calc_geno(generations$pop[[i - 1]], seedPerFruit = seedPerFruit)
+      generations$pop[[i]] <- calc_pheno(generations$seed[[i]])
     }
     return(generations)
   }
@@ -721,13 +721,13 @@ future::plan(future::multisession, workers = 6) # for laptop...
 
 # 80 minutes on laptop
 system.time({
-  sim.summary <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations),
+  sim_summary <- future_map_dfr(1:nsims, \(sim) calc_generations(startingPop = simpop, ngenerations = ngenerations),
     .id = "sim",
     .options = furrr_options(seed = TRUE, scheduling = 1)
   )
 })
 
-saveRDS(sim.summary, file = here(
+saveRDS(sim_summary, file = here(
   "Sim_Pop", "output",
   str_c(
     "simpop_summary_", nsims, "sims_",
@@ -745,13 +745,13 @@ ngenerations <- 10 # low for testing purposes
 
 future::plan(future::multisession, workers = 7)
 
-sim.all.data <- future_map_dfr(1:nsims, \(sim) compute.generations(startingPop = simpop, ngenerations = ngenerations, summarize = FALSE),
+sim_all_data <- future_map_dfr(1:nsims, \(sim) calc_generations(startingPop = simpop, ngenerations = ngenerations, summarize = FALSE),
   .id = "sim",
   .options = furrr_options(seed = TRUE, scheduling = 1)
 )
 
 
-saveRDS(sim.all.data, file = here(
+saveRDS(sim_all_data, file = here(
   "Sim_Pop", "output",
   str_c(
     "simpop_all_", nsims, "sims_",
