@@ -18,6 +18,8 @@ TODOs
 [*] CHECK/FIX POPSIZE CALCUALTION IN SCRIPT 4 (IF SIZE = 0 MAY NOT BE WORKING)
 [*] update summarize script to deal with new data structure
 [*] Create summary of pops as we go instead of returning the whole thing.
+[*] Standardize function names
+[] Standardize data / column names
 [] 100 starting pops?  Or okay to start with 1?
 [] Check on scoping and try to improve "<<-" call
 [] make all geno effects mean centered?
@@ -26,8 +28,6 @@ TODOs
 [] size dependence for fruit per plant (in sim data and models)
 [] possible time dependence for fruit per plant (in sim data and models)
 [] recombination / more intelligent handling of genotypic effects in mating
-
-I am modifying Brandie's script to work on stochastic simulations (as an alternative to the matrices)
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
