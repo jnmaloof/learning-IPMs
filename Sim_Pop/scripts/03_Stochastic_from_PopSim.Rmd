@@ -574,7 +574,7 @@ calc.pheno <- function(pop, weeks = 12, estab.weeks = 3, m.germ = germ.model.gen
                           NA),  # didn't germinate or not week 1) 
            size_next = NA)
   
-  if(max(pred$germinated,na.rm = TRUE) == 0 | max(pred$established, na.rm = TRUE) == 0 ) {
+  if(max(pred$germinated,na.rm = TRUE) == 0 || max(pred$established, na.rm = TRUE) == 0 ) {
     return(pred) # don't try to calcualte later phenotypes if no plants germinated or establisthed
   }
 
